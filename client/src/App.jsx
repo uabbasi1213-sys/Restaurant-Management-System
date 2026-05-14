@@ -7,6 +7,8 @@ import Dashboard from './pages/Dashboard';
 import Users from './pages/Users';
 import Settings from './pages/Settings';
 import AuditLogs from './pages/AuditLogs';
+import MenuCategories from './pages/MenuCategories';
+import MenuItems from './pages/MenuItems';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -27,6 +29,8 @@ export default function App() {
         <Route path="/users" element={<Users />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/audit-logs" element={<AuditLogs />} />
+        <Route path="/menu/categories" element={<MenuCategories />} />
+        <Route path="/menu/items" element={<MenuItems />} />
       </Route>
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>

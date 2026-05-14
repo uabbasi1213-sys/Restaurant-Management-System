@@ -1,10 +1,12 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, Users, Settings, FileText } from 'lucide-react';
+import { LayoutDashboard, Users, Settings, FileText, FolderOpen, UtensilsCrossed } from 'lucide-react';
 
 const allLinks = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard' },
   { to: '/users', label: 'Users', icon: Users, permission: 'users' },
+  { to: '/menu/categories', label: 'Categories', icon: FolderOpen, permission: 'menu' },
+  { to: '/menu/items', label: 'Menu Items', icon: UtensilsCrossed, permission: 'menu' },
   { to: '/settings', label: 'Settings', icon: Settings, permission: 'settings' },
   { to: '/audit-logs', label: 'Audit Logs', icon: FileText, permission: 'audit_logs', superAdminOnly: true },
 ];

@@ -12,6 +12,8 @@ import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import restaurantRoutes from './routes/restaurant.js';
 import auditLogRoutes from './routes/auditLogs.js';
+import menuCategoryRoutes from './routes/menuCategories.js';
+import menuItemRoutes from './routes/menuItems.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -24,6 +26,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/restaurant', restaurantRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/menu/categories', menuCategoryRoutes);
+app.use('/api/menu/items', menuItemRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
