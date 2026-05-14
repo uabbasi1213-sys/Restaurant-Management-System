@@ -11,6 +11,7 @@ import MenuCategories from './pages/MenuCategories';
 import MenuItems from './pages/MenuItems';
 import Inventory from './pages/Inventory';
 import Suppliers from './pages/Suppliers';
+import Purchases from './pages/Purchases';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/menu/items" element={<MenuItems />} />
         <Route path="/inventory" element={<Inventory />} />
         <Route path="/suppliers" element={<Suppliers />} />
+        <Route path="/purchases" element={<Purchases />} />
       </Route>
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
