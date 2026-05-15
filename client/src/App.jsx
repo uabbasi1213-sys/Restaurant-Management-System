@@ -16,6 +16,8 @@ import POS from './pages/POS';
 import Orders from './pages/Orders';
 import Kitchen from './pages/Kitchen';
 import Customers from './pages/Customers';
+import Expenses from './pages/Expenses';
+import Income from './pages/Income';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -45,6 +47,8 @@ export default function App() {
         <Route path="/orders" element={<Orders />} />
         <Route path="/kitchen" element={<Kitchen />} />
         <Route path="/customers" element={<Customers />} />
+        <Route path="/expenses" element={<Expenses />} />
+        <Route path="/income" element={<Income />} />
       </Route>
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>

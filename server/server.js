@@ -20,6 +20,8 @@ import purchaseRoutes from './routes/purchases.js';
 import orderRoutes from './routes/orders.js';
 import kitchenRoutes from './routes/kitchen.js';
 import customerRoutes from './routes/customers.js';
+import expenseRoutes from './routes/expenses.js';
+import incomeRoutes from './routes/income.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -40,6 +42,8 @@ app.use('/api/purchases', purchaseRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/kitchen', kitchenRoutes);
 app.use('/api/customers', customerRoutes);
+app.use('/api/expenses', expenseRoutes);
+app.use('/api/income', incomeRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
