@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
-import { ClipboardList, Eye, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ClipboardList, Eye, X, ChevronLeft, ChevronRight, Printer } from 'lucide-react';
+import InvoiceModal from '../components/InvoiceModal';
 
 const STATUS_COLORS = {
   pending: 'bg-yellow-100 text-yellow-700',
@@ -22,6 +23,7 @@ export default function Orders() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterType, setFilterType] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [printOrderId, setPrintOrderId] = useState(null);
 
   useEffect(() => { loadOrders(); }, [filterStatus, filterType]);
 
@@ -127,6 +129,9 @@ export default function Orders() {
                     <button onClick={() => viewOrder(order)} className="text-blue-600 hover:text-blue-800 p-1.5 rounded-lg hover:bg-blue-50">
                       <Eye size={16} />
                     </button>
+                    <button onClick={() => setPrintOrderId(order.id)} className="text-green-600 hover:text-green-800 p-1.5 rounded-lg hover:bg-green-50 ml-1">
+                      <Printer size={16} />
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -213,10 +218,19 @@ export default function Orders() {
                 </div>
                 <p className="text-xs text-gray-400 text-right capitalize">Payment: {selectedOrder.payment_type}</p>
               </div>
+
+              <button
+                onClick={() => setPrintOrderId(selectedOrder.id)}
+                className="w-full mt-4 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl font-semibold transition flex items-center justify-center gap-2"
+              >
+                <Printer size={16} /> Print Invoice
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {printOrderId && <InvoiceModal orderId={printOrderId} onClose={() => setPrintOrderId(null)} />}
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
-import { Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt } from 'lucide-react';
+import { Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer } from 'lucide-react';
+import InvoiceModal from '../components/InvoiceModal';
 
 export default function POS() {
   const [categories, setCategories] = useState([]);
@@ -17,6 +18,7 @@ export default function POS() {
   const [showCheckout, setShowCheckout] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(null);
   const [search, setSearch] = useState('');
+  const [printOrderId, setPrintOrderId] = useState(null);
 
   useEffect(() => {
     loadMenu();
@@ -310,6 +312,8 @@ export default function POS() {
       </div>
 
       {/* Order Success Popup */}
+      {printOrderId && <InvoiceModal orderId={printOrderId} onClose={() => setPrintOrderId(null)} />}
+
       {orderSuccess && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl p-8 text-center">
@@ -318,7 +322,13 @@ export default function POS() {
             </div>
             <h3 className="text-xl font-bold text-gray-800 mb-2">Order Placed!</h3>
             <p className="text-3xl font-bold text-orange-600 mb-1">{orderSuccess.order_number}</p>
-            <p className="text-gray-500 mb-6">Total: Rs. {orderSuccess.total?.toFixed(2)}</p>
+            <p className="text-gray-500 mb-4">Total: Rs. {orderSuccess.total?.toFixed(2)}</p>
+            <button
+              onClick={() => { setPrintOrderId(orderSuccess.id); }}
+              className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 mb-2"
+            >
+              <Printer size={18} /> Print Invoice
+            </button>
             <button
               onClick={() => setOrderSuccess(null)}
               className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl font-semibold transition"
