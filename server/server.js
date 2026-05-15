@@ -19,6 +19,7 @@ import supplierRoutes from './routes/suppliers.js';
 import purchaseRoutes from './routes/purchases.js';
 import orderRoutes from './routes/orders.js';
 import kitchenRoutes from './routes/kitchen.js';
+import customerRoutes from './routes/customers.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -38,6 +39,7 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/kitchen', kitchenRoutes);
+app.use('/api/customers', customerRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
