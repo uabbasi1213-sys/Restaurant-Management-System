@@ -308,9 +308,9 @@ function seedData() {
   if (rolesCount.count === 0) {
     const insertRole = db.prepare('INSERT INTO roles (name, permissions) VALUES (?, ?)');
     insertRole.run('Super Admin', JSON.stringify(['all']));
-    insertRole.run('Admin', JSON.stringify(['users', 'menu', 'inventory', 'suppliers', 'purchases', 'pos', 'kitchen', 'customers', 'income', 'expenses', 'daily_closing', 'dashboard', 'reports', 'settings']));
-    insertRole.run('Manager', JSON.stringify(['orders', 'kitchen', 'reports', 'dashboard', 'inventory', 'menu']));
-    insertRole.run('Waiter/Cashier', JSON.stringify(['orders', 'pos']));
+    insertRole.run('Admin', JSON.stringify(['users', 'menu', 'inventory', 'suppliers', 'purchases', 'pos', 'orders', 'kitchen', 'customers', 'income', 'expenses', 'daily_closing', 'dashboard', 'reports', 'backups', 'settings']));
+    insertRole.run('Manager', JSON.stringify(['orders', 'pos', 'kitchen', 'reports', 'dashboard', 'inventory', 'menu', 'customers', 'income', 'expenses']));
+    insertRole.run('Waiter/Cashier', JSON.stringify(['orders', 'pos', 'kitchen']));
   }
 
   const restaurantCount = db.prepare('SELECT COUNT(*) as count FROM restaurants').get();

@@ -20,6 +20,7 @@ import Expenses from './pages/Expenses';
 import Income from './pages/Income';
 import DailyClosing from './pages/DailyClosing';
 import Reports from './pages/Reports';
+import Backups from './pages/Backups';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="/income" element={<Income />} />
         <Route path="/daily-closing" element={<DailyClosing />} />
         <Route path="/reports" element={<Reports />} />
+        <Route path="/backups" element={<Backups />} />
       </Route>
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
