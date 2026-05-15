@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, Users, Settings, FileText, FolderOpen, UtensilsCrossed, Package, Truck, ShoppingCart, Monitor, ClipboardList } from 'lucide-react';
+import { LayoutDashboard, Users, Settings, FileText, FolderOpen, UtensilsCrossed, Package, Truck, ShoppingCart, Monitor, ClipboardList, ChefHat } from 'lucide-react';
 
 const allLinks = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard' },
@@ -12,6 +12,7 @@ const allLinks = [
   { to: '/purchases', label: 'Purchases', icon: ShoppingCart, permission: 'purchases' },
   { to: '/pos', label: 'POS / Billing', icon: Monitor, permission: 'pos' },
   { to: '/orders', label: 'Orders', icon: ClipboardList, permission: 'orders' },
+  { to: '/kitchen', label: 'Kitchen (KDS)', icon: ChefHat, permission: 'kitchen' },
   { to: '/settings', label: 'Settings', icon: Settings, permission: 'settings' },
   { to: '/audit-logs', label: 'Audit Logs', icon: FileText, permission: 'audit_logs', superAdminOnly: true },
 ];

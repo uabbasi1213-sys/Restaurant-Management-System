@@ -14,6 +14,7 @@ import Suppliers from './pages/Suppliers';
 import Purchases from './pages/Purchases';
 import POS from './pages/POS';
 import Orders from './pages/Orders';
+import Kitchen from './pages/Kitchen';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/purchases" element={<Purchases />} />
         <Route path="/pos" element={<POS />} />
         <Route path="/orders" element={<Orders />} />
+        <Route path="/kitchen" element={<Kitchen />} />
       </Route>
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
