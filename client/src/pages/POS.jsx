@@ -116,7 +116,7 @@ export default function POS() {
           tax: taxAmount,
           payment_type: paymentType,
           special_instructions: specialInstructions || null,
-          status: 'completed' // Assuming direct completion in simple POS
+          status: 'preparing' // Default status is preparing so it goes to KDS/Orders page
         }])
         .select()
         .single();
@@ -356,7 +356,7 @@ export default function POS() {
       {/* Order Success Popup */}
       {printOrderId && <InvoiceModal orderId={printOrderId} onClose={() => setPrintOrderId(null)} />}
 
-      {orderSuccess && (
+      {orderSuccess && !printOrderId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl p-8 text-center">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -366,7 +366,7 @@ export default function POS() {
             <p className="text-3xl font-bold text-orange-600 mb-1">{orderSuccess.order_number}</p>
             <p className="text-gray-500 mb-4">Total: Rs. {orderSuccess.total?.toFixed(2)}</p>
             <button
-              onClick={() => { setPrintOrderId(orderSuccess.id); }}
+              onClick={() => { setPrintOrderId(orderSuccess.id); setOrderSuccess(null); }}
               className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 mb-2"
             >
               <Printer size={18} /> Print Invoice
