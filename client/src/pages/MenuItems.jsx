@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabase';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { Plus, Pencil, Trash2, X, Search, ImageIcon, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Search, ImageIcon, ToggleLeft, ToggleRight, Upload, Loader2 } from 'lucide-react';
 
 export default function MenuItems() {
   const { profile } = useAuth();
@@ -13,6 +13,8 @@ export default function MenuItems() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef(null);
   const [form, setForm] = useState({
     name: '', category_id: '', cost_price: '', sale_price: '', description: '', barcode: '', image: ''
   });
@@ -93,10 +95,54 @@ export default function MenuItems() {
     setShowModal(true);
   };
 
-  const handleImageChange = (e) => {
-    const url = e.target.value;
-    setForm({ ...form, image: url });
-    setImagePreview(url);
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // File size check - max 5MB
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image size 5MB se zyada nahi honi chahiye');
+      return;
+    }
+
+    // Sirf images allow karo
+    if (!file.type.startsWith('image/')) {
+      toast.error('Sirf image files upload kar sakte hain');
+      return;
+    }
+
+    setUploadingImage(true);
+    try {
+      // Unique file name banao
+      const ext = file.name.split('.').pop();
+      const fileName = `${profile.tenant_id}/${Date.now()}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('menu-images')
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      // Public URL lo
+      const { data } = supabase.storage
+        .from('menu-images')
+        .getPublicUrl(fileName);
+
+      const publicUrl = data.publicUrl;
+      setForm(prev => ({ ...prev, image: publicUrl }));
+      setImagePreview(publicUrl);
+      toast.success('Image upload ho gayi!');
+    } catch (err) {
+      toast.error('Image upload fail: ' + err.message);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setForm(prev => ({ ...prev, image: '' }));
+    setImagePreview('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleSubmit = async (e) => {
@@ -296,24 +342,59 @@ export default function MenuItems() {
               </button>
             </div>
             <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
-              {/* Image URL */}
+              {/* Image Upload */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Item Image URL</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Item Image</label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  id="menu-image-upload"
+                />
                 <div className="flex items-center gap-4">
-                  <div className="w-24 h-24 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center border-2 border-dashed border-gray-300 flex-shrink-0">
-                    {imagePreview ? (
+                  {/* Preview Box - click to upload */}
+                  <div
+                    onClick={() => !uploadingImage && fileInputRef.current?.click()}
+                    className="w-28 h-28 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center border-2 border-dashed border-orange-300 flex-shrink-0 cursor-pointer hover:border-orange-500 hover:bg-orange-50 transition relative"
+                  >
+                    {uploadingImage ? (
+                      <Loader2 size={28} className="text-orange-400 animate-spin" />
+                    ) : imagePreview ? (
                       <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
                     ) : (
-                      <ImageIcon size={28} className="text-gray-400" />
+                      <div className="text-center">
+                        <Upload size={24} className="text-orange-400 mx-auto mb-1" />
+                        <span className="text-xs text-gray-400">Upload</span>
+                      </div>
                     )}
                   </div>
-                  <input
-                    type="url"
-                    value={form.image}
-                    onChange={handleImageChange}
-                    className="flex-1 px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none text-sm"
-                    placeholder="https://example.com/image.jpg"
-                  />
+
+                  <div className="flex-1">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingImage}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed border-orange-300 text-orange-600 hover:border-orange-500 hover:bg-orange-50 transition text-sm font-medium disabled:opacity-50"
+                    >
+                      {uploadingImage ? (
+                        <><Loader2 size={16} className="animate-spin" /> Uploading...</>
+                      ) : (
+                        <><Upload size={16} /> Apni device se image choose karein</>  
+                      )}
+                    </button>
+                    {imagePreview && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveImage}
+                        className="mt-2 w-full text-xs text-red-500 hover:text-red-700 flex items-center justify-center gap-1"
+                      >
+                        <X size={12} /> Image hatao
+                      </button>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1 text-center">JPG, PNG, WebP — max 5MB</p>
+                  </div>
                 </div>
               </div>
 
