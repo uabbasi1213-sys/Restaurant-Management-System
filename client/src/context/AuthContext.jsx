@@ -45,9 +45,49 @@ export function AuthProvider({ children }) {
         .from('profiles')
         .select('*')
         .eq('id', authUser.id)
-        .single();
+        .maybeSingle(); // Use maybeSingle so it doesn't throw if no row found
 
       if (profileError) throw profileError;
+
+      if (!profileData) {
+        // Profile not yet created (e.g. new user via signUp without trigger)
+        // Try to create one from user metadata
+        const meta = authUser.user_metadata || {};
+        if (meta.tenant_id) {
+          const { data: newProfile } = await supabase
+            .from('profiles')
+            .insert({
+              id: authUser.id,
+              full_name: meta.full_name || authUser.email,
+              email: authUser.email,
+              role: meta.role || 'admin',
+              tenant_id: meta.tenant_id,
+              is_active: true
+            })
+            .select()
+            .single();
+          setProfile(newProfile);
+          if (newProfile?.tenant_id) {
+            const { data: tenantData } = await supabase
+              .from('tenants')
+              .select('*')
+              .eq('id', newProfile.tenant_id)
+              .single();
+            if (tenantData) setTenant(tenantData);
+          }
+        } else {
+          // super_admin or unlinked user — set basic profile from auth data
+          setProfile({
+            id: authUser.id,
+            email: authUser.email,
+            full_name: authUser.user_metadata?.full_name || authUser.email,
+            role: authUser.user_metadata?.role || 'super_admin',
+            tenant_id: null
+          });
+        }
+        return;
+      }
+
       setProfile(profileData);
 
       // Fetch tenant if not super_admin (or fetch own tenant)
