@@ -133,7 +133,7 @@ export default function Dashboard() {
       };
 
       const todayExpense = (expensesData || []).reduce((sum, e) => sum + (e.amount || 0), 0);
-      const todayIncomeOther = (incomeData || []).reduce((sum, i) => sum + (e.amount || 0), 0);
+      const todayIncomeOther = (incomeData || []).reduce((sum, i) => sum + (i.amount || 0), 0);
 
       const todayProfit = todaySales.total + todayIncomeOther - todayExpense;
 
