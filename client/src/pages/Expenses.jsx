@@ -36,7 +36,7 @@ export default function Expenses() {
     try {
       let query = supabase.from('expenses').select(`
         *,
-        users!expenses_created_by_fkey(name)
+        profiles(full_name)
       `).eq('tenant_id', profile.tenant_id).order('date', { ascending: false });
       
       if (filterCat) query = query.eq('category', filterCat);
@@ -44,11 +44,21 @@ export default function Expenses() {
       if (dateTo) query = query.lte('date', dateTo);
       
       const { data, error } = await query;
-      if (error) { toast.error(error.message); return; }
+      if (error) {
+        // Fallback: load without join if FK doesn't exist
+        let q2 = supabase.from('expenses').select('*').eq('tenant_id', profile.tenant_id).order('date', { ascending: false });
+        if (filterCat) q2 = q2.eq('category', filterCat);
+        if (dateFrom) q2 = q2.gte('date', dateFrom);
+        if (dateTo) q2 = q2.lte('date', dateTo);
+        const { data: d2, error: e2 } = await q2;
+        if (e2) { toast.error(e2.message); return; }
+        setExpenses(d2 || []);
+        return;
+      }
       
-      const mapped = data.map(e => ({
+      const mapped = (data || []).map(e => ({
         ...e,
-        created_by_name: e.users?.name
+        created_by_name: e.profiles?.full_name
       }));
       setExpenses(mapped);
     } catch (err) { toast.error(err.message); }
