@@ -119,32 +119,38 @@ export default function Purchases() {
   const handleDelete = async (p) => {
     if (!confirm(`Delete this purchase? Inventory and supplier ledger will be reversed.`)) return;
     try {
-      const { error: txnErr } = await supabase.from('supplier_transactions')
-        .delete()
-        .eq('supplier_id', p.supplier_id)
-        .eq('description', `Purchase ID: ${p.id}`)
-        .eq('tenant_id', profile.tenant_id);
-      if (txnErr) { toast.error(txnErr.message); return; }
+      if (p.supplier_id) {
+        const { error: txnErr } = await supabase.from('supplier_transactions')
+          .delete()
+          .eq('supplier_id', p.supplier_id)
+          .eq('description', `Purchase ID: ${p.id}`)
+          .eq('tenant_id', profile.tenant_id);
+        if (txnErr) { toast.error(txnErr.message); return; }
+      }
 
       const { error } = await supabase.from('purchases').delete().eq('id', p.id).eq('tenant_id', profile.tenant_id);
       if (error) { toast.error(error.message); return; }
 
       // Reverse supplier balance
-      const supplier = suppliers.find(s => s.id === p.supplier_id);
-      if (supplier) {
-        const { error: sErr } = await supabase.from('suppliers').update({
-          balance: (supplier.balance || 0) - p.total
-        }).eq('id', supplier.id).eq('tenant_id', profile.tenant_id);
-        if (sErr) { toast.error(sErr.message); return; }
+      if (p.supplier_id) {
+        const supplier = suppliers.find(s => s.id === p.supplier_id);
+        if (supplier) {
+          const { error: sErr } = await supabase.from('suppliers').update({
+            balance: (supplier.balance || 0) - p.total
+          }).eq('id', supplier.id).eq('tenant_id', profile.tenant_id);
+          if (sErr) { toast.error(sErr.message); return; }
+        }
       }
 
       // Reverse inventory stock
-      const item = inventory.find(i => i.id === p.item_id);
-      if (item) {
-        const { error: iErr } = await supabase.from('inventory').update({
-          quantity: (item.quantity || 0) - p.quantity
-        }).eq('id', item.id).eq('tenant_id', profile.tenant_id);
-        if (iErr) { toast.error(iErr.message); return; }
+      if (p.item_id) {
+        const item = inventory.find(i => i.id === p.item_id);
+        if (item) {
+          const { error: iErr } = await supabase.from('inventory').update({
+            quantity: (item.quantity || 0) - p.quantity
+          }).eq('id', item.id).eq('tenant_id', profile.tenant_id);
+          if (iErr) { toast.error(iErr.message); return; }
+        }
       }
 
       toast.success('Purchase deleted & reversed');
