@@ -20,10 +20,10 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    if (profile?.tenant_id) {
+    if (profile) {
       loadDashboard();
     }
-  }, [profile?.tenant_id]);
+  }, [profile?.id]);
 
   const loadDashboard = async () => {
     try {
@@ -202,7 +202,26 @@ export default function Dashboard() {
       });
 
     } catch (err) {
-      toast.error(err.message);
+      console.error('Dashboard error:', err.message);
+      toast.error('Dashboard load failed: ' + err.message);
+      // Set empty data so the spinner stops
+      setData({
+        todaySales: { total: 0, count: 0 },
+        todayOrders: { total: 0, pending: 0, preparing: 0 },
+        todayProfit: 0,
+        lowStock: 0,
+        monthlySales: { total: 0 },
+        totalMenuItems: 0,
+        totalCustomers: 0,
+        totalUsers: 0,
+        salesTrend: [],
+        paymentBreakdown: [],
+        recentOrders: [],
+        topItems: [],
+        lowStockItems: [],
+        todayIncome: 0,
+        todayExpense: 0
+      });
     }
   };
 
