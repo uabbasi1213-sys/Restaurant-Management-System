@@ -78,16 +78,27 @@ export default function SuperAdmin() {
     e.preventDefault();
     setFormLoading(true);
     try {
-      const { data, error } = await supabase.auth.admin.createUser({
+      // Create a temporary Supabase client that doesn't save session to local storage
+      // This allows us to sign up a new user without logging out the Super Admin
+      const { createClient } = await import('@supabase/supabase-js');
+      const tempClient = createClient(
+        import.meta.env.VITE_SUPABASE_URL,
+        import.meta.env.VITE_SUPABASE_ANON_KEY,
+        { auth: { persistSession: false, autoRefreshToken: false } }
+      );
+
+      const { data, error } = await tempClient.auth.signUp({
         email: userForm.email,
         password: userForm.password,
-        user_metadata: {
-          full_name: userForm.full_name,
-          tenant_id: selectedTenant.id,
-          role: userForm.role
-        },
-        email_confirm: true
+        options: {
+          data: {
+            full_name: userForm.full_name,
+            tenant_id: selectedTenant.id,
+            role: userForm.role
+          }
+        }
       });
+      
       if (error) throw error;
       toast.success(`✅ User "${userForm.full_name}" created for ${selectedTenant.name}!`);
       setShowUserModal(false);
