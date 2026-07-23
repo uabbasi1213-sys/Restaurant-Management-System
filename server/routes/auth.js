@@ -1,33 +1,19 @@
 import { Router } from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import db from '../database.js';
 import { authenticate } from '../middleware/auth.js';
-import { logAudit } from '../middleware/audit.js';
 
 const router = Router();
 
+// Desktop app - auto login, no credentials needed
 router.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-
   const user = db.prepare(`
     SELECT u.*, r.name as role_name, r.permissions 
     FROM users u JOIN roles r ON u.role_id = r.id 
-    WHERE u.username = ?
-  `).get(username);
-
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-  if (!user.is_active) return res.status(401).json({ error: 'Account is disabled' });
-
-  const validPassword = bcrypt.compareSync(password, user.password);
-  if (!validPassword) return res.status(401).json({ error: 'Invalid credentials' });
-
-  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET || 'default_secret', { expiresIn: '24h' });
-  logAudit(user.id, user.username, 'LOGIN', 'Auth', 'User logged in');
+    WHERE u.id = 1
+  `).get();
 
   res.json({
-    token,
+    token: 'desktop-app-token',
     user: {
       id: user.id,
       username: user.username,
@@ -50,22 +36,6 @@ router.get('/me', authenticate, (req, res) => {
     },
     restaurant
   });
-});
-
-router.put('/change-password', authenticate, (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Both passwords required' });
-
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!bcrypt.compareSync(currentPassword, user.password)) {
-    return res.status(400).json({ error: 'Current password is incorrect' });
-  }
-
-  const hashed = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hashed, req.user.id);
-  logAudit(req.user.id, req.user.username, 'EDIT', 'Auth', 'Password changed');
-
-  res.json({ message: 'Password changed successfully' });
 });
 
 export default router;

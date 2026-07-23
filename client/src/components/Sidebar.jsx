@@ -24,29 +24,26 @@ const allLinks = [
 ];
 
 export default function Sidebar() {
-  const { user, restaurant } = useAuth();
-  const permissions = user?.permissions || [];
-  const isSuperAdmin = permissions.includes('all');
+  const { tenant, hasPermission, isSuperAdmin } = useAuth();
 
   const links = allLinks.filter(link => {
     if (link.superAdminOnly) return isSuperAdmin;
-    if (isSuperAdmin) return true;
-    return permissions.includes(link.permission);
+    return hasPermission(link.permission);
   });
 
   return (
     <aside className="w-64 bg-slate-900 text-white flex flex-col min-h-screen">
       <div className="p-4 border-b border-slate-700">
         <div className="flex items-center gap-3">
-          {restaurant?.logo ? (
-            <img src={restaurant.logo} alt="Logo" className="w-10 h-10 rounded-lg object-cover" />
+          {tenant?.logo ? (
+            <img src={tenant.logo} alt="Logo" className="w-10 h-10 rounded-lg object-cover" />
           ) : (
             <div className="w-10 h-10 bg-orange-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">
-              {(restaurant?.name || 'R')[0]}
+              {(tenant?.name || 'R')[0]}
             </div>
           )}
           <div>
-            <h1 className="font-bold text-sm leading-tight">{restaurant?.name || 'Restaurant'}</h1>
+            <h1 className="font-bold text-sm leading-tight">{tenant?.name || 'Restaurant'}</h1>
             <p className="text-xs text-slate-400">Management System</p>
           </div>
         </div>

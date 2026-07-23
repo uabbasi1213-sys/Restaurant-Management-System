@@ -33,7 +33,7 @@ router.get('/', authorize('dashboard', 'pos', 'orders'), (req, res) => {
 
   // Low stock items
   const lowStock = db.prepare(
-    'SELECT COUNT(*) as count FROM inventory WHERE restaurant_id = ? AND current_stock <= min_stock'
+    'SELECT COUNT(*) as count FROM inventory WHERE restaurant_id = ? AND quantity <= low_stock_threshold'
   ).get(restaurantId);
 
   // Active users
@@ -76,7 +76,7 @@ router.get('/', authorize('dashboard', 'pos', 'orders'), (req, res) => {
 
   // Low stock items detail
   const lowStockItems = db.prepare(
-    'SELECT name, current_stock, min_stock, unit FROM inventory WHERE restaurant_id = ? AND current_stock <= min_stock ORDER BY current_stock ASC LIMIT 6'
+    'SELECT name, quantity as current_stock, low_stock_threshold as min_stock, unit FROM inventory WHERE restaurant_id = ? AND quantity <= low_stock_threshold ORDER BY quantity ASC LIMIT 6'
   ).all(restaurantId);
 
   res.json({
