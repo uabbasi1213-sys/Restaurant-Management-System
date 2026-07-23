@@ -98,7 +98,7 @@ export default function DailyClosing() {
   };
 
   const closeDay = async () => {
-    if (!confirm('Close today? This will lock the day\\'s financials. Continue?')) return;
+    if (!confirm('Close today? This will lock the day financials. Continue?')) return;
     try {
       const { error } = await supabase.from('daily_closing').insert({
         tenant_id: profile.tenant_id,
