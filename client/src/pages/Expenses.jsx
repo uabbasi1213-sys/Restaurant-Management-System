@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Edit2, Trash2, Search, X, TrendingDown, Calendar, Filter } from 'lucide-react';
 
@@ -11,6 +12,7 @@ const CAT_COLORS = {
 };
 
 export default function Expenses() {
+  const { profile } = useAuth();
   const [expenses, setExpenses] = useState([]);
   const [summary, setSummary] = useState({ today: 0, month: 0, byCategory: [] });
   const [categories, setCategories] = useState([]);
@@ -22,24 +24,60 @@ export default function Expenses() {
   const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), description: '', amount: '', category: 'Other' });
 
   useEffect(() => {
-    api.get('/expenses/categories').then(setCategories).catch(() => {});
-    loadSummary();
-  }, []);
+    if (profile) {
+      setCategories(['Rent', 'Utilities', 'Salaries', 'Ingredients', 'Maintenance', 'Marketing', 'Transport', 'Equipment', 'Cleaning', 'Other']);
+      loadSummary();
+    }
+  }, [profile]);
 
-  useEffect(() => { loadExpenses(); }, [filterCat, dateFrom, dateTo]);
+  useEffect(() => { if (profile) loadExpenses(); }, [filterCat, dateFrom, dateTo, profile]);
 
   const loadExpenses = async () => {
     try {
-      let url = '/expenses?';
-      if (filterCat) url += `category=${encodeURIComponent(filterCat)}&`;
-      if (dateFrom) url += `date_from=${dateFrom}&`;
-      if (dateTo) url += `date_to=${dateTo}`;
-      setExpenses(await api.get(url));
+      let query = supabase.from('expenses').select(`
+        *,
+        users!expenses_created_by_fkey(name)
+      `).eq('tenant_id', profile.tenant_id).order('date', { ascending: false });
+      
+      if (filterCat) query = query.eq('category', filterCat);
+      if (dateFrom) query = query.gte('date', dateFrom);
+      if (dateTo) query = query.lte('date', dateTo);
+      
+      const { data, error } = await query;
+      if (error) { toast.error(error.message); return; }
+      
+      const mapped = data.map(e => ({
+        ...e,
+        created_by_name: e.users?.name
+      }));
+      setExpenses(mapped);
     } catch (err) { toast.error(err.message); }
   };
 
   const loadSummary = async () => {
-    try { setSummary(await api.get('/expenses/summary')); } catch {}
+    try {
+      const { data, error } = await supabase.from('expenses').select('*').eq('tenant_id', profile.tenant_id);
+      if (error) { toast.error(error.message); return; }
+      
+      const today = new Date().toISOString().slice(0,10);
+      const thisMonth = today.slice(0,7);
+      
+      let sumToday = 0;
+      let sumMonth = 0;
+      const catTotals = {};
+
+      data.forEach(e => {
+        if (e.date === today) sumToday += e.amount;
+        if (e.date.startsWith(thisMonth)) sumMonth += e.amount;
+        catTotals[e.category] = (catTotals[e.category] || 0) + e.amount;
+      });
+
+      const byCategory = Object.entries(catTotals)
+        .map(([category, total]) => ({ category, total }))
+        .sort((a, b) => b.total - a.total);
+
+      setSummary({ today: sumToday, month: sumMonth, byCategory });
+    } catch (err) {}
   };
 
   const openForm = (expense = null) => {
@@ -56,11 +94,16 @@ export default function Expenses() {
   const save = async () => {
     if (!form.description.trim() || !form.amount) return toast.error('Description and amount required');
     try {
+      const payload = { ...form, amount: parseFloat(form.amount), tenant_id: profile.tenant_id };
+      if (!editing) payload.created_by = profile.id;
+
       if (editing) {
-        await api.put(`/expenses/${editing.id}`, form);
+        const { error } = await supabase.from('expenses').update(payload).eq('id', editing.id).eq('tenant_id', profile.tenant_id);
+        if (error) { toast.error(error.message); return; }
         toast.success('Expense updated');
       } else {
-        await api.post('/expenses', form);
+        const { error } = await supabase.from('expenses').insert([payload]);
+        if (error) { toast.error(error.message); return; }
         toast.success('Expense added');
       }
       setShowForm(false);
@@ -72,7 +115,8 @@ export default function Expenses() {
   const remove = async (id) => {
     if (!confirm('Delete this expense?')) return;
     try {
-      await api.delete(`/expenses/${id}`);
+      const { error } = await supabase.from('expenses').delete().eq('id', id).eq('tenant_id', profile.tenant_id);
+      if (error) { toast.error(error.message); return; }
       toast.success('Deleted');
       loadExpenses();
       loadSummary();

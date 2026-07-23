@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Edit2, Trash2, X, TrendingUp } from 'lucide-react';
 
@@ -9,6 +10,7 @@ const TYPE_COLORS = {
 };
 
 export default function Income() {
+  const { profile } = useAuth();
   const [incomeList, setIncomeList] = useState([]);
   const [summary, setSummary] = useState({ today: 0, month: 0, byType: [] });
   const [types, setTypes] = useState([]);
@@ -20,24 +22,51 @@ export default function Income() {
   const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), type: 'Sales', amount: '', description: '' });
 
   useEffect(() => {
-    api.get('/income/types').then(setTypes).catch(() => {});
-    loadSummary();
-  }, []);
+    if (profile) {
+      setTypes(['Sales', 'Delivery Charges', 'Tips', 'Catering', 'Other']);
+      loadSummary();
+    }
+  }, [profile]);
 
-  useEffect(() => { loadIncome(); }, [filterType, dateFrom, dateTo]);
+  useEffect(() => { if (profile) loadIncome(); }, [filterType, dateFrom, dateTo, profile]);
 
   const loadIncome = async () => {
     try {
-      let url = '/income?';
-      if (filterType) url += `type=${encodeURIComponent(filterType)}&`;
-      if (dateFrom) url += `date_from=${dateFrom}&`;
-      if (dateTo) url += `date_to=${dateTo}`;
-      setIncomeList(await api.get(url));
+      let query = supabase.from('income').select('*').eq('tenant_id', profile.tenant_id).order('date', { ascending: false });
+      if (filterType) query = query.eq('type', filterType);
+      if (dateFrom) query = query.gte('date', dateFrom);
+      if (dateTo) query = query.lte('date', dateTo);
+      
+      const { data, error } = await query;
+      if (error) { toast.error(error.message); return; }
+      setIncomeList(data);
     } catch (err) { toast.error(err.message); }
   };
 
   const loadSummary = async () => {
-    try { setSummary(await api.get('/income/summary')); } catch {}
+    try {
+      const { data, error } = await supabase.from('income').select('*').eq('tenant_id', profile.tenant_id);
+      if (error) { toast.error(error.message); return; }
+      
+      const today = new Date().toISOString().slice(0,10);
+      const thisMonth = today.slice(0,7);
+      
+      let sumToday = 0;
+      let sumMonth = 0;
+      const typeTotals = {};
+
+      data.forEach(i => {
+        if (i.date === today) sumToday += i.amount;
+        if (i.date.startsWith(thisMonth)) sumMonth += i.amount;
+        typeTotals[i.type] = (typeTotals[i.type] || 0) + i.amount;
+      });
+
+      const byType = Object.entries(typeTotals)
+        .map(([type, total]) => ({ type, total }))
+        .sort((a, b) => b.total - a.total);
+
+      setSummary({ today: sumToday, month: sumMonth, byType });
+    } catch (err) {}
   };
 
   const openForm = (income = null) => {
@@ -54,11 +83,16 @@ export default function Income() {
   const save = async () => {
     if (!form.type || !form.amount) return toast.error('Type and amount required');
     try {
+      const payload = { ...form, amount: parseFloat(form.amount), tenant_id: profile.tenant_id };
+      if (!editing) payload.created_by = profile.id;
+
       if (editing) {
-        await api.put(`/income/${editing.id}`, form);
+        const { error } = await supabase.from('income').update(payload).eq('id', editing.id).eq('tenant_id', profile.tenant_id);
+        if (error) { toast.error(error.message); return; }
         toast.success('Income updated');
       } else {
-        await api.post('/income', form);
+        const { error } = await supabase.from('income').insert([payload]);
+        if (error) { toast.error(error.message); return; }
         toast.success('Income recorded');
       }
       setShowForm(false);
@@ -70,7 +104,8 @@ export default function Income() {
   const remove = async (id) => {
     if (!confirm('Delete this income entry?')) return;
     try {
-      await api.delete(`/income/${id}`);
+      const { error } = await supabase.from('income').delete().eq('id', id).eq('tenant_id', profile.tenant_id);
+      if (error) { toast.error(error.message); return; }
       toast.success('Deleted');
       loadIncome();
       loadSummary();

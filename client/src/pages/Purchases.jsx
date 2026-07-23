@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Trash2, X, ShoppingCart, Filter } from 'lucide-react';
 
 export default function Purchases() {
+  const { profile } = useAuth();
   const [purchases, setPurchases] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [inventory, setInventory] = useState([]);
@@ -11,15 +13,17 @@ export default function Purchases() {
   const [filterSupplier, setFilterSupplier] = useState('');
   const [form, setForm] = useState({ supplier_id: '', item_id: '', quantity: '', rate: '' });
 
-  useEffect(() => { loadAll(); }, []);
-  useEffect(() => { loadPurchases(); }, [filterSupplier]);
+  useEffect(() => { if (profile) loadAll(); }, [profile]);
+  useEffect(() => { if (profile) loadPurchases(); }, [filterSupplier, profile]);
 
   const loadAll = async () => {
     try {
-      const [s, i] = await Promise.all([
-        api.get('/suppliers'),
-        api.get('/inventory')
-      ]);
+      const { data: s, error: sErr } = await supabase.from('suppliers').select('*').eq('tenant_id', profile.tenant_id);
+      if (sErr) { toast.error(sErr.message); return; }
+      
+      const { data: i, error: iErr } = await supabase.from('inventory').select('*').eq('tenant_id', profile.tenant_id);
+      if (iErr) { toast.error(iErr.message); return; }
+
       setSuppliers(s);
       setInventory(i);
     } catch (err) { toast.error(err.message); }
@@ -27,10 +31,26 @@ export default function Purchases() {
 
   const loadPurchases = async () => {
     try {
-      let url = '/purchases?';
-      if (filterSupplier) url += `supplier_id=${filterSupplier}`;
-      const data = await api.get(url);
-      setPurchases(data);
+      let query = supabase.from('purchases').select(`
+        *,
+        suppliers(name, company),
+        inventory(name, unit)
+      `).eq('tenant_id', profile.tenant_id).order('created_at', { ascending: false });
+      
+      if (filterSupplier) {
+        query = query.eq('supplier_id', filterSupplier);
+      }
+      
+      const { data, error } = await query;
+      if (error) { toast.error(error.message); return; }
+      
+      const mapped = data.map(p => ({
+        ...p,
+        supplier_name: p.suppliers?.name,
+        item_name: p.inventory?.name,
+        item_unit: p.inventory?.unit
+      }));
+      setPurchases(mapped);
     } catch (err) { toast.error(err.message); }
   };
 
@@ -47,24 +67,89 @@ export default function Purchases() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/purchases', form);
+      const qty = parseFloat(form.quantity);
+      const rate = parseFloat(form.rate);
+      const total = qty * rate;
+
+      const { data: pData, error } = await supabase.from('purchases').insert([{
+        tenant_id: profile.tenant_id,
+        supplier_id: form.supplier_id,
+        item_id: form.item_id,
+        quantity: qty,
+        rate: rate,
+        total: total
+      }]).select().single();
+      if (error) { toast.error(error.message); return; }
+
+      // Also record supplier transaction
+      const { error: txnErr } = await supabase.from('supplier_transactions').insert([{
+        tenant_id: profile.tenant_id,
+        supplier_id: form.supplier_id,
+        type: 'purchase',
+        amount: total,
+        description: `Purchase ID: ${pData.id}`
+      }]);
+      if (txnErr) { toast.error(txnErr.message); return; }
+
+      // Update supplier balance
+      const supplier = suppliers.find(s => s.id === form.supplier_id);
+      if (supplier) {
+        const { error: sErr } = await supabase.from('suppliers').update({
+          balance: (supplier.balance || 0) + total
+        }).eq('id', supplier.id).eq('tenant_id', profile.tenant_id);
+        if (sErr) { toast.error(sErr.message); return; }
+      }
+
+      // Update inventory stock
+      const item = inventory.find(i => i.id === form.item_id);
+      if (item) {
+        const { error: iErr } = await supabase.from('inventory').update({
+          quantity: (item.quantity || 0) + qty
+        }).eq('id', item.id).eq('tenant_id', profile.tenant_id);
+        if (iErr) { toast.error(iErr.message); return; }
+      }
+
       toast.success('Purchase recorded! Inventory & supplier ledger updated automatically.');
       setShowModal(false);
       loadPurchases();
-      // Refresh inventory for updated quantities
-      const i = await api.get('/inventory');
-      setInventory(i);
+      loadAll(); // Refresh inventory for updated quantities
     } catch (err) { toast.error(err.message); }
   };
 
   const handleDelete = async (p) => {
     if (!confirm(`Delete this purchase? Inventory and supplier ledger will be reversed.`)) return;
     try {
-      await api.delete(`/purchases/${p.id}`);
+      const { error: txnErr } = await supabase.from('supplier_transactions')
+        .delete()
+        .eq('supplier_id', p.supplier_id)
+        .eq('description', `Purchase ID: ${p.id}`)
+        .eq('tenant_id', profile.tenant_id);
+      if (txnErr) { toast.error(txnErr.message); return; }
+
+      const { error } = await supabase.from('purchases').delete().eq('id', p.id).eq('tenant_id', profile.tenant_id);
+      if (error) { toast.error(error.message); return; }
+
+      // Reverse supplier balance
+      const supplier = suppliers.find(s => s.id === p.supplier_id);
+      if (supplier) {
+        const { error: sErr } = await supabase.from('suppliers').update({
+          balance: (supplier.balance || 0) - p.total
+        }).eq('id', supplier.id).eq('tenant_id', profile.tenant_id);
+        if (sErr) { toast.error(sErr.message); return; }
+      }
+
+      // Reverse inventory stock
+      const item = inventory.find(i => i.id === p.item_id);
+      if (item) {
+        const { error: iErr } = await supabase.from('inventory').update({
+          quantity: (item.quantity || 0) - p.quantity
+        }).eq('id', item.id).eq('tenant_id', profile.tenant_id);
+        if (iErr) { toast.error(iErr.message); return; }
+      }
+
       toast.success('Purchase deleted & reversed');
       loadPurchases();
-      const i = await api.get('/inventory');
-      setInventory(i);
+      loadAll();
     } catch (err) { toast.error(err.message); }
   };
 

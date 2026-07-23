@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { UserPlus, Edit2, Trash2, Search, X, Eye, CreditCard, Wallet, Phone, MapPin, Receipt } from 'lucide-react';
 
@@ -18,18 +19,36 @@ export default function Customers() {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [showTxnForm, setShowTxnForm] = useState(false);
   const [txnForm, setTxnForm] = useState({ type: 'payment', amount: '', description: '' });
+  const { profile } = useAuth();
 
-  useEffect(() => { loadCustomers(); }, []);
+  useEffect(() => {
+    if (profile?.tenant_id) {
+      loadCustomers();
+    }
+  }, [profile?.tenant_id]);
 
   const loadCustomers = async () => {
     try {
-      const data = await api.get(`/customers${search ? `?search=${encodeURIComponent(search)}` : ''}`);
-      setCustomers(data);
+      if (!profile?.tenant_id) return;
+      let query = supabase
+        .from('customers')
+        .select('*')
+        .eq('tenant_id', profile.tenant_id);
+      
+      if (search) {
+        query = query.or(`name.ilike.%${search}%,phone.ilike.%${search}%`);
+      }
+      
+      const { data, error } = await query;
+      if (error) { toast.error(error.message); return; }
+      setCustomers(data || []);
     } catch (err) { toast.error(err.message); }
   };
 
   useEffect(() => {
-    const timer = setTimeout(loadCustomers, 300);
+    const timer = setTimeout(() => {
+      if (profile?.tenant_id) loadCustomers();
+    }, 300);
     return () => clearTimeout(timer);
   }, [search]);
 
@@ -48,10 +67,17 @@ export default function Customers() {
     if (!form.name.trim()) return toast.error('Name is required');
     try {
       if (editing) {
-        await api.put(`/customers/${editing.id}`, form);
+        const { error } = await supabase
+          .from('customers')
+          .update(form)
+          .eq('id', editing.id);
+        if (error) { toast.error(error.message); return; }
         toast.success('Customer updated');
       } else {
-        await api.post('/customers', form);
+        const { error } = await supabase
+          .from('customers')
+          .insert([{ ...form, tenant_id: profile.tenant_id }]);
+        if (error) { toast.error(error.message); return; }
         toast.success('Customer added');
       }
       setShowForm(false);
@@ -62,7 +88,11 @@ export default function Customers() {
   const deleteCustomer = async (id) => {
     if (!confirm('Delete this customer?')) return;
     try {
-      await api.delete(`/customers/${id}`);
+      const { error } = await supabase
+        .from('customers')
+        .delete()
+        .eq('id', id);
+      if (error) { toast.error(error.message); return; }
       toast.success('Customer deleted');
       loadCustomers();
     } catch (err) { toast.error(err.message); }
@@ -70,8 +100,28 @@ export default function Customers() {
 
   const viewCustomer = async (customer) => {
     try {
-      const data = await api.get(`/customers/${customer.id}`);
-      setSelectedCustomer(data);
+      const { data, error } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('id', customer.id)
+        .single();
+      if (error) { toast.error(error.message); return; }
+
+      const { data: txns, error: txnsError } = await supabase
+        .from('customer_transactions')
+        .select('*')
+        .eq('customer_id', customer.id)
+        .order('created_at', { ascending: false });
+      if (txnsError) { toast.error(txnsError.message); return; }
+
+      const { data: orders, error: ordersError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('customer_id', customer.id)
+        .order('created_at', { ascending: false });
+      if (ordersError) { toast.error(ordersError.message); return; }
+
+      setSelectedCustomer({ ...data, transactions: txns || [], orders: orders || [] });
     } catch (err) { toast.error(err.message); }
   };
 
@@ -83,12 +133,29 @@ export default function Customers() {
   const saveTxn = async () => {
     if (!txnForm.amount || parseFloat(txnForm.amount) <= 0) return toast.error('Valid amount required');
     try {
-      await api.post(`/customers/${selectedCustomer.id}/transactions`, txnForm);
+      const { error } = await supabase
+        .from('customer_transactions')
+        .insert([{ 
+          ...txnForm, 
+          customer_id: selectedCustomer.id,
+          tenant_id: profile.tenant_id 
+        }]);
+      if (error) { toast.error(error.message); return; }
+
+      const amount = parseFloat(txnForm.amount);
+      let balanceChange = txnForm.type === 'credit' ? amount : -amount;
+      const newBalance = (selectedCustomer.balance || 0) + balanceChange;
+
+      const { error: updateError } = await supabase
+        .from('customers')
+        .update({ balance: newBalance })
+        .eq('id', selectedCustomer.id);
+      
+      if (updateError) { toast.error(updateError.message); return; }
+
       toast.success('Transaction recorded');
       setShowTxnForm(false);
-      // Refresh customer detail
-      const data = await api.get(`/customers/${selectedCustomer.id}`);
-      setSelectedCustomer(data);
+      viewCustomer(selectedCustomer);
       loadCustomers();
     } catch (err) { toast.error(err.message); }
   };

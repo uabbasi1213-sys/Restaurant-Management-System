@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, Search, ImageIcon, ToggleLeft, ToggleRight } from 'lucide-react';
 
 export default function MenuItems() {
+  const { profile } = useAuth();
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -11,22 +13,30 @@ export default function MenuItems() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
-  const [imageFile, setImageFile] = useState(null);
   const [form, setForm] = useState({
-    name: '', category_id: '', cost_price: '', sale_price: '', description: '', barcode: ''
+    name: '', category_id: '', cost_price: '', sale_price: '', description: '', barcode: '', image: ''
   });
 
   useEffect(() => {
-    loadCategories();
-  }, []);
+    if (profile?.tenant_id) {
+      loadCategories();
+    }
+  }, [profile?.tenant_id]);
 
   useEffect(() => {
-    loadItems();
-  }, [selectedCategory, search]);
+    if (profile?.tenant_id) {
+      loadItems();
+    }
+  }, [profile?.tenant_id, selectedCategory, search]);
 
   const loadCategories = async () => {
     try {
-      const data = await api.get('/menu/categories');
+      const { data, error } = await supabase
+        .from('menu_categories')
+        .select('*')
+        .eq('tenant_id', profile.tenant_id)
+        .order('name');
+      if (error) throw error;
       setCategories(data);
     } catch (err) {
       toast.error(err.message);
@@ -35,11 +45,27 @@ export default function MenuItems() {
 
   const loadItems = async () => {
     try {
-      let url = '/menu/items?';
-      if (selectedCategory) url += `category_id=${selectedCategory}&`;
-      if (search) url += `search=${encodeURIComponent(search)}`;
-      const data = await api.get(url);
-      setItems(data);
+      let query = supabase
+        .from('menu_items')
+        .select('*, menu_categories(name)')
+        .eq('tenant_id', profile.tenant_id);
+
+      if (selectedCategory) {
+        query = query.eq('category_id', selectedCategory);
+      }
+      if (search) {
+        query = query.ilike('name', `%${search}%`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const formatted = data.map(item => ({
+        ...item,
+        category_name: item.menu_categories?.name
+      }));
+
+      setItems(formatted);
     } catch (err) {
       toast.error(err.message);
     }
@@ -47,9 +73,8 @@ export default function MenuItems() {
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ name: '', category_id: categories[0]?.id || '', cost_price: '', sale_price: '', description: '', barcode: '' });
+    setForm({ name: '', category_id: categories[0]?.id || '', cost_price: '', sale_price: '', description: '', barcode: '', image: '' });
     setImagePreview('');
-    setImageFile(null);
     setShowModal(true);
   };
 
@@ -61,37 +86,46 @@ export default function MenuItems() {
       cost_price: item.cost_price || '',
       sale_price: item.sale_price,
       description: item.description || '',
-      barcode: item.barcode || ''
+      barcode: item.barcode || '',
+      image: item.image || ''
     });
     setImagePreview(item.image || '');
-    setImageFile(null);
     setShowModal(true);
   };
 
   const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
+    const url = e.target.value;
+    setForm({ ...form, image: url });
+    setImagePreview(url);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const formData = new FormData();
-      formData.append('name', form.name);
-      formData.append('category_id', form.category_id);
-      formData.append('cost_price', form.cost_price);
-      formData.append('sale_price', form.sale_price);
-      formData.append('description', form.description);
-      formData.append('barcode', form.barcode);
-      if (imageFile) formData.append('image', imageFile);
+      const payload = {
+        tenant_id: profile.tenant_id,
+        name: form.name,
+        category_id: form.category_id || null,
+        cost_price: form.cost_price || 0,
+        sale_price: form.sale_price,
+        description: form.description,
+        barcode: form.barcode,
+        image: form.image
+      };
 
       if (editing) {
-        await api.put(`/menu/items/${editing.id}`, formData);
+        const { error } = await supabase
+          .from('menu_items')
+          .update(payload)
+          .eq('id', editing.id)
+          .eq('tenant_id', profile.tenant_id);
+        if (error) throw error;
         toast.success('Menu item updated');
       } else {
-        await api.post('/menu/items', formData);
+        const { error } = await supabase
+          .from('menu_items')
+          .insert([payload]);
+        if (error) throw error;
         toast.success('Menu item created');
       }
       setShowModal(false);
@@ -103,7 +137,12 @@ export default function MenuItems() {
 
   const toggleAvailability = async (item) => {
     try {
-      await api.patch(`/menu/items/${item.id}/availability`, {});
+      const { error } = await supabase
+        .from('menu_items')
+        .update({ is_available: !item.is_available })
+        .eq('id', item.id)
+        .eq('tenant_id', profile.tenant_id);
+      if (error) throw error;
       loadItems();
     } catch (err) {
       toast.error(err.message);
@@ -113,7 +152,12 @@ export default function MenuItems() {
   const handleDelete = async (item) => {
     if (!confirm(`Delete "${item.name}"?`)) return;
     try {
-      await api.delete(`/menu/items/${item.id}`);
+      const { error } = await supabase
+        .from('menu_items')
+        .delete()
+        .eq('id', item.id)
+        .eq('tenant_id', profile.tenant_id);
+      if (error) throw error;
       toast.success('Item deleted');
       loadItems();
     } catch (err) {
@@ -252,21 +296,24 @@ export default function MenuItems() {
               </button>
             </div>
             <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
-              {/* Image Upload */}
+              {/* Image URL */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Item Image</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Item Image URL</label>
                 <div className="flex items-center gap-4">
-                  <div className="w-24 h-24 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center border-2 border-dashed border-gray-300">
+                  <div className="w-24 h-24 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center border-2 border-dashed border-gray-300 flex-shrink-0">
                     {imagePreview ? (
                       <img src={imagePreview} alt="Preview" className="w-full h-full object-cover" />
                     ) : (
                       <ImageIcon size={28} className="text-gray-400" />
                     )}
                   </div>
-                  <label className="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-sm font-medium transition">
-                    Choose Image
-                    <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
-                  </label>
+                  <input
+                    type="url"
+                    value={form.image}
+                    onChange={handleImageChange}
+                    className="flex-1 px-4 py-3 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none text-sm"
+                    placeholder="https://example.com/image.jpg"
+                  />
                 </div>
               </div>
 
@@ -291,7 +338,7 @@ export default function MenuItems() {
                 >
                   <option value="">No Category</option>
                   {categories.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                   ))}
                 </select>
               </div>

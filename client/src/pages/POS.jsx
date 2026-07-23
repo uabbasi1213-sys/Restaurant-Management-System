@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer } from 'lucide-react';
 import InvoiceModal from '../components/InvoiceModal';
 
 export default function POS() {
+  const { profile } = useAuth();
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -21,17 +23,28 @@ export default function POS() {
   const [printOrderId, setPrintOrderId] = useState(null);
 
   useEffect(() => {
-    loadMenu();
-  }, []);
+    if (profile?.tenant_id) {
+      loadMenu();
+    }
+  }, [profile?.tenant_id]);
 
   const loadMenu = async () => {
     try {
-      const [cats, items] = await Promise.all([
-        api.get('/menu/categories'),
-        api.get('/menu/items')
-      ]);
+      const { data: cats, error: catError } = await supabase
+        .from('menu_categories')
+        .select('*')
+        .eq('tenant_id', profile.tenant_id);
+      if (catError) throw catError;
+
+      const { data: items, error: itemError } = await supabase
+        .from('menu_items')
+        .select('*')
+        .eq('tenant_id', profile.tenant_id)
+        .eq('is_available', true);
+      if (itemError) throw itemError;
+
       setCategories(cats);
-      setMenuItems(items.filter(i => i.is_available));
+      setMenuItems(items);
     } catch (err) { toast.error(err.message); }
   };
 
@@ -88,23 +101,52 @@ export default function POS() {
   const placeOrder = async () => {
     if (cart.length === 0) return toast.error('Cart is empty!');
     try {
-      const data = await api.post('/orders', {
-        order_type: orderType,
-        table_number: tableNumber || null,
-        items: cart,
-        discount: discountAmount,
-        tax: taxAmount,
-        payment_type: paymentType,
-        special_instructions: specialInstructions || null
-      });
-      setOrderSuccess(data);
+      const orderNumber = `ORD-${Date.now()}`;
+      
+      const { data: orderData, error: orderError } = await supabase
+        .from('orders')
+        .insert([{
+          tenant_id: profile.tenant_id,
+          order_number: orderNumber,
+          order_type: orderType,
+          table_number: tableNumber || null,
+          total: grandTotal,
+          subtotal: subtotal,
+          discount: discountAmount,
+          tax: taxAmount,
+          payment_type: paymentType,
+          special_instructions: specialInstructions || null,
+          status: 'completed' // Assuming direct completion in simple POS
+        }])
+        .select()
+        .single();
+        
+      if (orderError) throw orderError;
+
+      const orderItems = cart.map(item => ({
+        tenant_id: profile.tenant_id,
+        order_id: orderData.id,
+        menu_item_id: item.menu_item_id,
+        item_name: item.item_name,
+        quantity: item.quantity,
+        price: item.price,
+        special_instructions: item.special_instructions || null
+      }));
+
+      const { error: itemsError } = await supabase
+        .from('order_items')
+        .insert(orderItems);
+        
+      if (itemsError) throw itemsError;
+
+      setOrderSuccess(orderData);
       setCart([]);
       setDiscount('');
       setTax('');
       setTableNumber('');
       setSpecialInstructions('');
       setShowCheckout(false);
-      toast.success(`Order ${data.order_number} placed!`);
+      toast.success(`Order ${orderData.order_number} placed!`);
     } catch (err) { toast.error(err.message); }
   };
 

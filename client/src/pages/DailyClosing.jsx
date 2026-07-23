@@ -1,30 +1,116 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Lock, Unlock, CalendarCheck, TrendingUp, TrendingDown, Wallet, ShoppingCart, CreditCard, Receipt, AlertTriangle } from 'lucide-react';
 
 export default function DailyClosing() {
+  const { profile } = useAuth();
   const [today, setToday] = useState(null);
   const [history, setHistory] = useState([]);
   const [tab, setTab] = useState('today');
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { if (profile?.tenant_id) loadData(); }, [profile?.tenant_id]);
 
   const loadData = async () => {
     try {
-      const [t, h] = await Promise.all([
-        api.get('/daily-closing/today'),
-        api.get('/daily-closing/history')
-      ]);
-      setToday(t);
-      setHistory(h);
-    } catch (err) { toast.error(err.message); }
+      const { data: h, error: hErr } = await supabase
+        .from('daily_closing')
+        .select('*')
+        .eq('tenant_id', profile.tenant_id)
+        .order('date', { ascending: false });
+      
+      if (hErr) { toast.error(hErr.message); return; }
+      
+      const historyData = h || [];
+      setHistory(historyData);
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const closedToday = historyData.find(x => x.date === todayStr);
+
+      if (closedToday) {
+        setToday({
+          ...closedToday,
+          is_closed: true,
+          orders: { active: 0, completed: 0, cancelled: 0, total_orders: 0 },
+          paymentBreakdown: [],
+          expenseBreakdown: []
+        });
+      } else {
+        const lastClosed = historyData[0];
+        const opening_balance = lastClosed ? lastClosed.closing_balance : 0;
+
+        const { data: orders } = await supabase.from('orders').select('*').eq('tenant_id', profile.tenant_id).gte('created_at', todayStr);
+        const { data: payments } = await supabase.from('order_payments').select('*').eq('tenant_id', profile.tenant_id).gte('created_at', todayStr);
+        const { data: expenses } = await supabase.from('expenses').select('*').eq('tenant_id', profile.tenant_id).eq('date', todayStr);
+        const { data: incomes } = await supabase.from('income').select('*').eq('tenant_id', profile.tenant_id).eq('date', todayStr);
+
+        const activeOrders = orders?.filter(o => o.status !== 'completed' && o.status !== 'cancelled') || [];
+        const completedOrders = orders?.filter(o => o.status === 'completed') || [];
+        const cancelledOrders = orders?.filter(o => o.status === 'cancelled') || [];
+        
+        const income_orders = payments?.reduce((acc, p) => acc + (p.amount || 0), 0) || 0;
+        const income_manual = incomes?.reduce((acc, i) => acc + (i.amount || 0), 0) || 0;
+        const total_income = income_orders + income_manual;
+        const total_expense = expenses?.reduce((acc, e) => acc + (e.amount || 0), 0) || 0;
+        
+        const pbMap = {};
+        payments?.forEach(p => {
+          pbMap[p.payment_method] = pbMap[p.payment_method] || { count: 0, total: 0 };
+          pbMap[p.payment_method].count++;
+          pbMap[p.payment_method].total += p.amount;
+        });
+        const paymentBreakdown = Object.keys(pbMap).map(k => ({ payment_type: k, count: pbMap[k].count, total: pbMap[k].total }));
+
+        const ebMap = {};
+        expenses?.forEach(e => {
+          ebMap[e.category] = ebMap[e.category] || 0;
+          ebMap[e.category] += e.amount;
+        });
+        const expenseBreakdown = Object.keys(ebMap).map(k => ({ category: k, total: ebMap[k] }));
+
+        const closing_balance = opening_balance + total_income - total_expense;
+        const net_profit = total_income - total_expense;
+
+        setToday({
+          date: todayStr,
+          is_closed: false,
+          opening_balance,
+          total_income,
+          income_orders,
+          income_manual,
+          total_expense,
+          closing_balance,
+          net_profit,
+          orders: {
+            active: activeOrders.length,
+            completed: completedOrders.length,
+            cancelled: cancelledOrders.length,
+            total_orders: orders?.length || 0
+          },
+          paymentBreakdown,
+          expenseBreakdown
+        });
+      }
+    } catch (err) {
+      toast.error(err.message);
+    }
   };
 
   const closeDay = async () => {
-    if (!confirm('Close today? This will lock the day\'s financials. Continue?')) return;
+    if (!confirm('Close today? This will lock the day\\'s financials. Continue?')) return;
     try {
-      await api.post('/daily-closing/close');
+      const { error } = await supabase.from('daily_closing').insert({
+        tenant_id: profile.tenant_id,
+        date: today.date,
+        opening_balance: today.opening_balance,
+        total_income: today.total_income,
+        total_expense: today.total_expense,
+        closing_balance: today.closing_balance,
+        closed_by: profile.id,
+        closed_by_name: profile.full_name
+      });
+      if (error) { toast.error(error.message); return; }
       toast.success('Day closed successfully!');
       loadData();
     } catch (err) { toast.error(err.message); }
@@ -33,7 +119,8 @@ export default function DailyClosing() {
   const reopenDay = async (date) => {
     if (!confirm(`Reopen ${date}? This will allow modifications.`)) return;
     try {
-      await api.delete(`/daily-closing/${date}`);
+      const { error } = await supabase.from('daily_closing').delete().eq('tenant_id', profile.tenant_id).eq('date', date);
+      if (error) { toast.error(error.message); return; }
       toast.success('Day reopened');
       loadData();
     } catch (err) { toast.error(err.message); }

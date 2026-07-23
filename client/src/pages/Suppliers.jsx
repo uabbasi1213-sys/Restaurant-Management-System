@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, BookOpen, ArrowLeft, DollarSign, TrendingUp, TrendingDown, Truck } from 'lucide-react';
 
 export default function Suppliers() {
+  const { profile } = useAuth();
   const [suppliers, setSuppliers] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -15,11 +17,14 @@ export default function Suppliers() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: '', description: '' });
 
-  useEffect(() => { loadSuppliers(); }, []);
+  useEffect(() => {
+    if (profile) loadSuppliers();
+  }, [profile]);
 
   const loadSuppliers = async () => {
     try {
-      const data = await api.get('/suppliers');
+      const { data, error } = await supabase.from('suppliers').select('*').eq('tenant_id', profile.tenant_id);
+      if (error) { toast.error(error.message); return; }
       setSuppliers(data);
     } catch (err) { toast.error(err.message); }
   };
@@ -40,10 +45,12 @@ export default function Suppliers() {
     e.preventDefault();
     try {
       if (editing) {
-        await api.put(`/suppliers/${editing.id}`, form);
+        const { error } = await supabase.from('suppliers').update(form).eq('id', editing.id).eq('tenant_id', profile.tenant_id);
+        if (error) { toast.error(error.message); return; }
         toast.success('Supplier updated');
       } else {
-        await api.post('/suppliers', form);
+        const { error } = await supabase.from('suppliers').insert([{ ...form, tenant_id: profile.tenant_id }]);
+        if (error) { toast.error(error.message); return; }
         toast.success('Supplier added');
       }
       setShowModal(false);
@@ -54,7 +61,8 @@ export default function Suppliers() {
   const handleDelete = async (s) => {
     if (!confirm(`Delete supplier "${s.name}"?`)) return;
     try {
-      await api.delete(`/suppliers/${s.id}`);
+      const { error } = await supabase.from('suppliers').delete().eq('id', s.id).eq('tenant_id', profile.tenant_id);
+      if (error) { toast.error(error.message); return; }
       toast.success('Supplier deleted');
       loadSuppliers();
     } catch (err) { toast.error(err.message); }
@@ -63,9 +71,30 @@ export default function Suppliers() {
   // Ledger functions
   const openLedger = async (supplier) => {
     try {
-      const data = await api.get(`/suppliers/${supplier.id}/ledger`);
+      const { data: txns, error } = await supabase
+        .from('supplier_transactions')
+        .select('*')
+        .eq('supplier_id', supplier.id)
+        .eq('tenant_id', profile.tenant_id)
+        .order('created_at', { ascending: false });
+        
+      if (error) { toast.error(error.message); return; }
+      
+      let totalPurchases = 0;
+      let totalPayments = 0;
+      txns.forEach(t => {
+        if (t.type === 'purchase') totalPurchases += t.amount;
+        if (t.type === 'payment') totalPayments += t.amount;
+      });
+      const balance = totalPurchases - totalPayments;
+      
       setLedgerSupplier(supplier);
-      setLedgerData(data);
+      setLedgerData({
+        transactions: txns,
+        totalPurchases,
+        totalPayments,
+        balance
+      });
     } catch (err) { toast.error(err.message); }
   };
 
@@ -77,7 +106,20 @@ export default function Suppliers() {
   const handlePayment = async (e) => {
     e.preventDefault();
     try {
-      await api.post(`/suppliers/${ledgerSupplier.id}/payment`, paymentForm);
+      const amount = parseFloat(paymentForm.amount);
+      const { error } = await supabase.from('supplier_transactions').insert([{
+        tenant_id: profile.tenant_id,
+        supplier_id: ledgerSupplier.id,
+        type: 'payment',
+        amount,
+        description: paymentForm.description
+      }]);
+      if (error) { toast.error(error.message); return; }
+      
+      const newBalance = ledgerData.balance - amount;
+      const { error: updateError } = await supabase.from('suppliers').update({ balance: newBalance }).eq('id', ledgerSupplier.id).eq('tenant_id', profile.tenant_id);
+      if (updateError) { toast.error(updateError.message); return; }
+
       toast.success('Payment recorded');
       setShowPaymentModal(false);
       setPaymentForm({ amount: '', description: '' });

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, Search, AlertTriangle, Package } from 'lucide-react';
 
@@ -12,13 +13,29 @@ export default function Inventory() {
   const [editing, setEditing] = useState(null);
   const [showLowOnly, setShowLowOnly] = useState(false);
   const [form, setForm] = useState({ name: '', quantity: '', unit: 'KG', cost: '', low_stock_threshold: '10' });
+  const { profile } = useAuth();
 
-  useEffect(() => { loadItems(); }, []);
+  useEffect(() => {
+    if (profile?.tenant_id) {
+      loadItems();
+    }
+  }, [profile?.tenant_id]);
 
   const loadItems = async () => {
     try {
-      const data = await api.get('/inventory');
-      setItems(data);
+      if (!profile?.tenant_id) return;
+      const { data, error } = await supabase
+        .from('inventory')
+        .select('*')
+        .eq('tenant_id', profile.tenant_id);
+
+      if (error) { toast.error(error.message); return; }
+      
+      const itemsWithLowStock = (data || []).map(item => ({
+        ...item,
+        is_low_stock: Number(item.quantity) <= Number(item.low_stock_threshold)
+      }));
+      setItems(itemsWithLowStock);
     } catch (err) { toast.error(err.message); }
   };
 
@@ -52,10 +69,17 @@ export default function Inventory() {
     e.preventDefault();
     try {
       if (editing) {
-        await api.put(`/inventory/${editing.id}`, form);
+        const { error } = await supabase
+          .from('inventory')
+          .update(form)
+          .eq('id', editing.id);
+        if (error) { toast.error(error.message); return; }
         toast.success('Stock item updated');
       } else {
-        await api.post('/inventory', form);
+        const { error } = await supabase
+          .from('inventory')
+          .insert([{ ...form, tenant_id: profile.tenant_id }]);
+        if (error) { toast.error(error.message); return; }
         toast.success('Stock item added');
       }
       setShowModal(false);
@@ -66,7 +90,11 @@ export default function Inventory() {
   const handleDelete = async (item) => {
     if (!confirm(`Delete "${item.name}" from inventory?`)) return;
     try {
-      await api.delete(`/inventory/${item.id}`);
+      const { error } = await supabase
+        .from('inventory')
+        .delete()
+        .eq('id', item.id);
+      if (error) { toast.error(error.message); return; }
       toast.success('Item removed');
       loadItems();
     } catch (err) { toast.error(err.message); }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import api from '../utils/api';
+import { supabase } from '../supabase';
+import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { ClipboardList, Eye, X, ChevronLeft, ChevronRight, Printer } from 'lucide-react';
 import InvoiceModal from '../components/InvoiceModal';
@@ -24,34 +25,62 @@ export default function Orders() {
   const [filterType, setFilterType] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [printOrderId, setPrintOrderId] = useState(null);
+  const { profile } = useAuth();
 
-  useEffect(() => { loadOrders(); }, [filterStatus, filterType]);
+  useEffect(() => {
+    if (profile?.tenant_id) {
+      loadOrders();
+    }
+  }, [filterStatus, filterType, profile?.tenant_id]);
 
   const loadOrders = async () => {
     try {
-      let url = '/orders?';
-      if (filterStatus) url += `status=${filterStatus}&`;
-      if (filterType) url += `order_type=${filterType}`;
-      const data = await api.get(url);
-      setOrders(data);
+      let query = supabase
+        .from('orders')
+        .select('*')
+        .eq('tenant_id', profile.tenant_id)
+        .order('created_at', { ascending: false });
+
+      if (filterStatus) query = query.eq('status', filterStatus);
+      if (filterType) query = query.eq('order_type', filterType);
+
+      const { data, error } = await query;
+      if (error) { toast.error(error.message); return; }
+      setOrders(data || []);
     } catch (err) { toast.error(err.message); }
   };
 
   const viewOrder = async (order) => {
     try {
-      const data = await api.get(`/orders/${order.id}`);
-      setSelectedOrder(data);
+      const { data: orderData, error: orderError } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', order.id)
+        .single();
+      if (orderError) { toast.error(orderError.message); return; }
+
+      const { data: itemsData, error: itemsError } = await supabase
+        .from('order_items')
+        .select('*')
+        .eq('order_id', order.id);
+      if (itemsError) { toast.error(itemsError.message); return; }
+
+      setSelectedOrder({ ...orderData, items: itemsData || [] });
     } catch (err) { toast.error(err.message); }
   };
 
   const updateStatus = async (orderId, status) => {
     try {
-      await api.patch(`/orders/${orderId}/status`, { status });
+      const { error } = await supabase
+        .from('orders')
+        .update({ status })
+        .eq('id', orderId);
+      if (error) { toast.error(error.message); return; }
+
       toast.success(`Order status updated to ${status}`);
       loadOrders();
       if (selectedOrder?.id === orderId) {
-        const data = await api.get(`/orders/${orderId}`);
-        setSelectedOrder(data);
+        viewOrder({ id: orderId });
       }
     } catch (err) { toast.error(err.message); }
   };
