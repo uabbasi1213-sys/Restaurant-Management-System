@@ -122,6 +122,13 @@ export function AuthProvider({ children }) {
   const isAdmin = profile?.role === 'admin' || isSuperAdmin;
   const hasPermission = (perm) => {
     if (isSuperAdmin) return true;
+    // Admin with no specific permissions set → grant everything
+    if (isAdmin) {
+      if (!profile?.permissions || profile.permissions === '[]' || 
+          (Array.isArray(profile.permissions) && profile.permissions.length === 0)) {
+        return true;
+      }
+    }
     if (!profile?.permissions) return false;
     const perms = Array.isArray(profile.permissions) ? profile.permissions : JSON.parse(profile.permissions || '[]');
     return perms.includes(perm) || perms.includes('all');
