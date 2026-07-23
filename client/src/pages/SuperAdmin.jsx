@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 
 export default function SuperAdmin() {
-  const { profile } = useAuth();
+  const { profile, logout } = useAuth();
   const [tenants, setTenants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -160,19 +160,39 @@ export default function SuperAdmin() {
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setShowAddModal(true)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: '8px',
-            padding: '11px 22px',
-            background: 'linear-gradient(135deg, #f97316, #dc2626)',
-            border: 'none', borderRadius: '12px',
-            color: 'white', fontSize: '14px', fontWeight: '600',
-            cursor: 'pointer', boxShadow: '0 4px 16px rgba(249,115,22,0.3)'
-          }}
-        >
-          <Plus size={18} /> Add New Client
-        </button>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button
+            onClick={() => setShowAddModal(true)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '11px 22px',
+              background: 'linear-gradient(135deg, #f97316, #dc2626)',
+              border: 'none', borderRadius: '12px',
+              color: 'white', fontSize: '14px', fontWeight: '600',
+              cursor: 'pointer', boxShadow: '0 4px 16px rgba(249,115,22,0.3)'
+            }}
+          >
+            <Plus size={18} /> Add New Client
+          </button>
+          
+          <button
+            onClick={() => {
+              if(window.confirm('Are you sure you want to logout?')) {
+                logout();
+              }
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '8px',
+              padding: '11px 18px',
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px',
+              color: 'rgba(255,255,255,0.8)', fontSize: '14px', fontWeight: '600',
+              cursor: 'pointer'
+            }}
+          >
+            Logout
+          </button>
+        </div>
       </div>
 
       <div style={{ padding: '32px' }}>
