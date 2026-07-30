@@ -150,10 +150,161 @@ export default function POS() {
     } catch (err) { toast.error(err.message); }
   };
 
+  // Mobile cart visibility state
+  const [mobileCartOpen, setMobileCartOpen] = useState(false);
+  const totalCartItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  // Cart content - reused in both desktop sidebar and mobile bottom sheet
+  const CartContent = ({ isMobile = false }) => (
+    <>
+      {/* Cart Header */}
+      <div className="p-4 border-b">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-bold text-gray-800 flex items-center gap-2">
+            <ShoppingCart size={18} /> Cart ({cart.length})
+          </h3>
+          <div className="flex items-center gap-2">
+            {cart.length > 0 && (
+              <button onClick={() => setCart([])} className="text-xs text-red-500 hover:text-red-700">
+                Clear All
+              </button>
+            )}
+            {isMobile && (
+              <button onClick={() => setMobileCartOpen(false)} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100">
+                <X size={20} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Order Type */}
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+          {['dine-in', 'takeaway', 'delivery'].map(type => (
+            <button
+              key={type}
+              onClick={() => setOrderType(type)}
+              className={`flex-1 py-1.5 rounded-md text-xs font-medium transition capitalize ${
+                orderType === type ? 'bg-orange-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-200'
+              }`}
+            >{type}</button>
+          ))}
+        </div>
+
+        {orderType === 'dine-in' && (
+          <input
+            type="text"
+            value={tableNumber}
+            onChange={e => setTableNumber(e.target.value)}
+            placeholder="Table number..."
+            className="w-full mt-2 px-3 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-orange-500 outline-none"
+          />
+        )}
+      </div>
+
+      {/* Cart Items */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {cart.length === 0 ? (
+          <div className="text-center py-12 text-gray-400">
+            <ShoppingCart size={40} className="mx-auto mb-2 opacity-30" />
+            <p className="text-sm">Add items from menu</p>
+          </div>
+        ) : (
+          cart.map(item => (
+            <div key={item.menu_item_id} className="bg-gray-50 rounded-xl p-3">
+              <div className="flex items-start gap-2">
+                {item.image && (
+                  <img src={item.image} alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-gray-800 text-sm truncate">{item.item_name}</p>
+                  <p className="text-orange-600 text-xs font-semibold">Rs. {item.price} each</p>
+                </div>
+                <button onClick={() => removeFromCart(item.menu_item_id)} className="text-red-400 hover:text-red-600 p-1">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <div className="flex items-center gap-2 bg-white rounded-lg border">
+                  <button onClick={() => updateQuantity(item.menu_item_id, -1)} className="p-1.5 hover:bg-gray-100 rounded-l-lg">
+                    <Minus size={14} />
+                  </button>
+                  <span className="text-sm font-semibold w-6 text-center">{item.quantity}</span>
+                  <button onClick={() => updateQuantity(item.menu_item_id, 1)} className="p-1.5 hover:bg-gray-100 rounded-r-lg">
+                    <Plus size={14} />
+                  </button>
+                </div>
+                <p className="font-bold text-gray-800 text-sm">Rs. {item.total.toFixed(2)}</p>
+              </div>
+              <input
+                type="text"
+                value={item.special_instructions}
+                onChange={e => updateItemInstructions(item.menu_item_id, e.target.value)}
+                placeholder="Special instructions..."
+                className="w-full mt-2 px-2 py-1 rounded-md border text-xs focus:ring-1 focus:ring-orange-500 outline-none"
+              />
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Cart Footer */}
+      {cart.length > 0 && (
+        <div className="border-t p-4 space-y-3">
+          <div className="flex justify-between text-sm text-gray-600">
+            <span>Subtotal</span>
+            <span className="font-semibold">Rs. {subtotal.toFixed(2)}</span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              type="number" min="0" step="0.01"
+              value={discount}
+              onChange={e => setDiscount(e.target.value)}
+              placeholder="Discount"
+              className="px-2 py-1.5 rounded-lg border text-sm focus:ring-1 focus:ring-orange-500 outline-none"
+            />
+            <input
+              type="number" min="0" step="0.01"
+              value={tax}
+              onChange={e => setTax(e.target.value)}
+              placeholder="Tax"
+              className="px-2 py-1.5 rounded-lg border text-sm focus:ring-1 focus:ring-orange-500 outline-none"
+            />
+          </div>
+
+          <div className="flex justify-between text-lg font-bold text-gray-800 pt-2 border-t">
+            <span>Total</span>
+            <span className="text-orange-600">Rs. {grandTotal.toFixed(2)}</span>
+          </div>
+
+          {/* Payment Type */}
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            {['cash', 'card', 'online', 'credit'].map(type => (
+              <button
+                key={type}
+                onClick={() => setPaymentType(type)}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition capitalize ${
+                  paymentType === type ? 'bg-green-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-200'
+                }`}
+              >{type}</button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => { placeOrder(); if (isMobile) setMobileCartOpen(false); }}
+            className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl font-bold text-lg transition flex items-center justify-center gap-2 active:scale-95"
+          >
+            <Send size={20} /> Place Order
+          </button>
+        </div>
+      )}
+    </>
+  );
+
   return (
-    <div className="flex h-[calc(100vh-5rem)] -m-6">
-      {/* LEFT: Menu Grid */}
-      <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 p-4">
+    <div className="flex h-[calc(100vh-5rem)] -m-4 md:-m-6">
+      {/* LEFT: Menu Grid - full width on mobile */}
+      <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 p-3 md:p-4">
         {/* Search & Categories */}
         <div className="mb-3">
           <input
@@ -183,8 +334,8 @@ export default function POS() {
         </div>
 
         {/* Items Grid */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
             {filteredItems.map(item => (
               <button
                 key={item.id}
@@ -196,13 +347,13 @@ export default function POS() {
                     <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
-                      <ImageIcon size={32} className="text-gray-300" />
+                      <ImageIcon size={24} className="text-gray-300 md:w-8 md:h-8" />
                     </div>
                   )}
                 </div>
-                <div className="p-2.5">
-                  <p className="font-medium text-gray-800 text-sm truncate">{item.name}</p>
-                  <p className="text-orange-600 font-bold">Rs. {item.sale_price}</p>
+                <div className="p-2 md:p-2.5">
+                  <p className="font-medium text-gray-800 text-xs md:text-sm truncate">{item.name}</p>
+                  <p className="text-orange-600 font-bold text-sm md:text-base">Rs. {item.sale_price}</p>
                 </div>
               </button>
             ))}
@@ -215,143 +366,51 @@ export default function POS() {
         </div>
       </div>
 
-      {/* RIGHT: Cart & Checkout */}
-      <div className="w-80 lg:w-96 bg-white border-l flex flex-col">
-        {/* Cart Header */}
-        <div className="p-4 border-b">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-gray-800 flex items-center gap-2">
-              <ShoppingCart size={18} /> Cart ({cart.length})
-            </h3>
-            {cart.length > 0 && (
-              <button onClick={() => setCart([])} className="text-xs text-red-500 hover:text-red-700">
-                Clear All
-              </button>
-            )}
-          </div>
-
-          {/* Order Type */}
-          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-            {['dine-in', 'takeaway', 'delivery'].map(type => (
-              <button
-                key={type}
-                onClick={() => setOrderType(type)}
-                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition capitalize ${
-                  orderType === type ? 'bg-orange-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-200'
-                }`}
-              >{type}</button>
-            ))}
-          </div>
-
-          {orderType === 'dine-in' && (
-            <input
-              type="text"
-              value={tableNumber}
-              onChange={e => setTableNumber(e.target.value)}
-              placeholder="Table number..."
-              className="w-full mt-2 px-3 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-orange-500 outline-none"
-            />
-          )}
-        </div>
-
-        {/* Cart Items */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {cart.length === 0 ? (
-            <div className="text-center py-12 text-gray-400">
-              <ShoppingCart size={40} className="mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Add items from menu</p>
-            </div>
-          ) : (
-            cart.map(item => (
-              <div key={item.menu_item_id} className="bg-gray-50 rounded-xl p-3">
-                <div className="flex items-start gap-2">
-                  {item.image && (
-                    <img src={item.image} alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-gray-800 text-sm truncate">{item.item_name}</p>
-                    <p className="text-orange-600 text-xs font-semibold">Rs. {item.price} each</p>
-                  </div>
-                  <button onClick={() => removeFromCart(item.menu_item_id)} className="text-red-400 hover:text-red-600 p-1">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-                <div className="flex items-center justify-between mt-2">
-                  <div className="flex items-center gap-2 bg-white rounded-lg border">
-                    <button onClick={() => updateQuantity(item.menu_item_id, -1)} className="p-1.5 hover:bg-gray-100 rounded-l-lg">
-                      <Minus size={14} />
-                    </button>
-                    <span className="text-sm font-semibold w-6 text-center">{item.quantity}</span>
-                    <button onClick={() => updateQuantity(item.menu_item_id, 1)} className="p-1.5 hover:bg-gray-100 rounded-r-lg">
-                      <Plus size={14} />
-                    </button>
-                  </div>
-                  <p className="font-bold text-gray-800 text-sm">Rs. {item.total.toFixed(2)}</p>
-                </div>
-                <input
-                  type="text"
-                  value={item.special_instructions}
-                  onChange={e => updateItemInstructions(item.menu_item_id, e.target.value)}
-                  placeholder="Special instructions..."
-                  className="w-full mt-2 px-2 py-1 rounded-md border text-xs focus:ring-1 focus:ring-orange-500 outline-none"
-                />
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Cart Footer */}
-        {cart.length > 0 && (
-          <div className="border-t p-4 space-y-3">
-            <div className="flex justify-between text-sm text-gray-600">
-              <span>Subtotal</span>
-              <span className="font-semibold">Rs. {subtotal.toFixed(2)}</span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="number" min="0" step="0.01"
-                value={discount}
-                onChange={e => setDiscount(e.target.value)}
-                placeholder="Discount"
-                className="px-2 py-1.5 rounded-lg border text-sm focus:ring-1 focus:ring-orange-500 outline-none"
-              />
-              <input
-                type="number" min="0" step="0.01"
-                value={tax}
-                onChange={e => setTax(e.target.value)}
-                placeholder="Tax"
-                className="px-2 py-1.5 rounded-lg border text-sm focus:ring-1 focus:ring-orange-500 outline-none"
-              />
-            </div>
-
-            <div className="flex justify-between text-lg font-bold text-gray-800 pt-2 border-t">
-              <span>Total</span>
-              <span className="text-orange-600">Rs. {grandTotal.toFixed(2)}</span>
-            </div>
-
-            {/* Payment Type */}
-            <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-              {['cash', 'card', 'online', 'credit'].map(type => (
-                <button
-                  key={type}
-                  onClick={() => setPaymentType(type)}
-                  className={`flex-1 py-1.5 rounded-md text-xs font-medium transition capitalize ${
-                    paymentType === type ? 'bg-green-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-200'
-                  }`}
-                >{type}</button>
-              ))}
-            </div>
-
-            <button
-              onClick={placeOrder}
-              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl font-bold text-lg transition flex items-center justify-center gap-2 active:scale-95"
-            >
-              <Send size={20} /> Place Order
-            </button>
-          </div>
-        )}
+      {/* RIGHT: Cart Sidebar - DESKTOP ONLY (hidden on mobile) */}
+      <div className="hidden md:flex w-80 lg:w-96 bg-white border-l flex-col">
+        <CartContent isMobile={false} />
       </div>
+
+      {/* MOBILE: Floating Cart Button (shown only on mobile when cart has items) */}
+      {cart.length > 0 && !mobileCartOpen && (
+        <button
+          onClick={() => setMobileCartOpen(true)}
+          className="md:hidden fixed bottom-5 right-5 z-40 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl px-5 py-3.5 shadow-xl shadow-orange-600/30 flex items-center gap-3 active:scale-95 transition-all"
+        >
+          <div className="relative">
+            <ShoppingCart size={22} />
+            <span className="absolute -top-2 -right-2 bg-white text-orange-600 text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center shadow">
+              {totalCartItems}
+            </span>
+          </div>
+          <div className="text-left">
+            <p className="text-xs font-medium opacity-90">{cart.length} item{cart.length > 1 ? 's' : ''}</p>
+            <p className="text-sm font-bold">Rs. {grandTotal.toFixed(0)}</p>
+          </div>
+        </button>
+      )}
+
+      {/* MOBILE: Cart Bottom Sheet Overlay */}
+      {mobileCartOpen && (
+        <div className="md:hidden fixed inset-0 z-50">
+          {/* Dark backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50 transition-opacity"
+            onClick={() => setMobileCartOpen(false)}
+          />
+          {/* Bottom Sheet */}
+          <div
+            className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl flex flex-col shadow-2xl"
+            style={{ maxHeight: '90vh' }}
+          >
+            {/* Drag Handle */}
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 bg-gray-300 rounded-full" />
+            </div>
+            <CartContent isMobile={true} />
+          </div>
+        </div>
+      )}
 
       {/* Order Success Popup */}
       {printOrderId && <InvoiceModal orderId={printOrderId} onClose={() => setPrintOrderId(null)} />}
