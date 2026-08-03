@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, Users, Settings, FileText, FolderOpen, UtensilsCrossed, Package, Truck, ShoppingCart, Monitor, ClipboardList, ChefHat, UserCheck, TrendingDown, TrendingUp, CalendarCheck, BarChart3, Database, X } from 'lucide-react';
+import { LayoutDashboard, Users, Settings, FileText, FolderOpen, UtensilsCrossed, Package, Truck, ShoppingCart, Monitor, ClipboardList, ChefHat, UserCheck, TrendingDown, TrendingUp, CalendarCheck, BarChart3, Database, X, LogOut, User } from 'lucide-react';
 
 const allLinks = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, permission: 'dashboard' },
@@ -24,7 +24,7 @@ const allLinks = [
 ];
 
 export default function Sidebar({ isOpen, onClose }) {
-  const { tenant, hasPermission, isSuperAdmin } = useAuth();
+  const { tenant, hasPermission, isSuperAdmin, profile, logout } = useAuth();
 
   const links = allLinks.filter(link => {
     if (link.superAdminOnly) return isSuperAdmin;
@@ -98,8 +98,37 @@ export default function Sidebar({ isOpen, onClose }) {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-700 text-xs text-slate-500">
-          Restaurant MS v1.0
+        {/* User Info + Logout */}
+        <div className="p-3 border-t border-slate-700">
+          {/* User Info */}
+          <div className="flex items-center gap-3 px-2 py-2 mb-2">
+            <div className="w-8 h-8 bg-orange-600 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+              {(profile?.full_name || profile?.email || 'U')[0].toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-white truncate">
+                {profile?.full_name || profile?.email || 'User'}
+              </p>
+              <p className="text-xs text-slate-400 capitalize">
+                {profile?.role || 'staff'}
+              </p>
+            </div>
+          </div>
+
+          {/* Logout Button */}
+          <button
+            onClick={() => {
+              if (window.confirm('Kya aap logout karna chahte hain?')) {
+                logout();
+              }
+            }}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-red-400 hover:bg-red-600 hover:text-white transition-colors"
+          >
+            <LogOut size={18} />
+            Logout
+          </button>
+
+          <p className="text-center text-xs text-slate-600 mt-2">Restaurant MS v1.0</p>
         </div>
       </aside>
     </>
