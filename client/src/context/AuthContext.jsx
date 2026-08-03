@@ -50,30 +50,49 @@ export function AuthProvider({ children }) {
       if (profileError) throw profileError;
 
       if (!profileData) {
-        // Profile not yet created (e.g. new user via signUp without trigger)
-        // Try to create one from user metadata
+        // Profile not yet created — try to create from user metadata
         const meta = authUser.user_metadata || {};
         if (meta.tenant_id) {
-          const { data: newProfile } = await supabase
+          const { data: newProfile, error: insertError } = await supabase
             .from('profiles')
-            .insert({
+            .upsert({
               id: authUser.id,
               full_name: meta.full_name || authUser.email,
               email: authUser.email,
               role: meta.role || 'admin',
               tenant_id: meta.tenant_id,
               is_active: true
-            })
+            }, { onConflict: 'id' })
             .select()
             .single();
-          setProfile(newProfile);
-          if (newProfile?.tenant_id) {
+
+          if (insertError) {
+            console.error('Profile creation failed:', insertError.message);
+            // Still set basic profile so user isn't stuck
+            setProfile({
+              id: authUser.id,
+              email: authUser.email,
+              full_name: meta.full_name || authUser.email,
+              role: meta.role || 'admin',
+              tenant_id: meta.tenant_id
+            });
+            // Fetch tenant separately
             const { data: tenantData } = await supabase
               .from('tenants')
               .select('*')
-              .eq('id', newProfile.tenant_id)
+              .eq('id', meta.tenant_id)
               .single();
             if (tenantData) setTenant(tenantData);
+          } else {
+            setProfile(newProfile);
+            if (newProfile?.tenant_id) {
+              const { data: tenantData } = await supabase
+                .from('tenants')
+                .select('*')
+                .eq('id', newProfile.tenant_id)
+                .single();
+              if (tenantData) setTenant(tenantData);
+            }
           }
         } else {
           // super_admin or unlinked user — set basic profile from auth data

@@ -100,15 +100,39 @@ export default function SuperAdmin() {
       });
       
       if (error) throw error;
-      toast.success(`✅ User "${userForm.full_name}" created for ${selectedTenant.name}!`);
+      if (!data?.user) throw new Error('User creation failed — no user returned');
+
+      // ✅ Explicitly create profile in profiles table
+      // This ensures owner dashboard loads correctly on first login
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: data.user.id,
+          full_name: userForm.full_name,
+          email: userForm.email,
+          role: userForm.role,
+          tenant_id: selectedTenant.id,
+          is_active: true
+        }, { onConflict: 'id' });
+
+      if (profileError) {
+        console.warn('Profile insert warning (may need email confirmation first):', profileError.message);
+        // Non-fatal: AuthContext fallback will try to create profile on first login
+        toast.success(`✅ User "${userForm.full_name}" created! Note: They must confirm their email before logging in.`);
+      } else {
+        toast.success(`✅ User "${userForm.full_name}" created for ${selectedTenant.name}! They can now login.`);
+      }
+
       setShowUserModal(false);
       setUserForm({ full_name: '', email: '', password: '', role: 'admin' });
     } catch (err) {
-      toast.error(err.message);
+      const msg = err.message || err.error_description || (typeof err === 'string' ? err : 'Error creating user (Email might already exist or password is too short).');
+      toast.error(msg);
     } finally {
       setFormLoading(false);
     }
   };
+
 
   const toggleTenantStatus = async (tenant) => {
     const newStatus = tenant.subscription_status === 'active' ? 'suspended' : 'active';
