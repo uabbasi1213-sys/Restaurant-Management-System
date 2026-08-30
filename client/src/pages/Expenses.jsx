@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Edit2, Trash2, Search, X, TrendingDown, Calendar, Filter } from 'lucide-react';
@@ -34,49 +34,28 @@ export default function Expenses() {
 
   const loadExpenses = async () => {
     try {
-      let query = supabase.from('expenses').select(`
-        *,
-        profiles(full_name)
-      `).eq('tenant_id', profile.tenant_id).order('date', { ascending: false });
-      
-      if (filterCat) query = query.eq('category', filterCat);
-      if (dateFrom) query = query.gte('date', dateFrom);
-      if (dateTo) query = query.lte('date', dateTo);
-      
-      const { data, error } = await query;
-      if (error) {
-        // Fallback: load without join if FK doesn't exist
-        let q2 = supabase.from('expenses').select('*').eq('tenant_id', profile.tenant_id).order('date', { ascending: false });
-        if (filterCat) q2 = q2.eq('category', filterCat);
-        if (dateFrom) q2 = q2.gte('date', dateFrom);
-        if (dateTo) q2 = q2.lte('date', dateTo);
-        const { data: d2, error: e2 } = await q2;
-        if (e2) { toast.error(e2.message); return; }
-        setExpenses(d2 || []);
-        return;
-      }
-      
-      const mapped = (data || []).map(e => ({
-        ...e,
-        created_by_name: e.profiles?.full_name
-      }));
-      setExpenses(mapped);
+      const params = new URLSearchParams();
+      if (filterCat) params.append('category', filterCat);
+      if (dateFrom) params.append('dateFrom', dateFrom);
+      if (dateTo) params.append('dateTo', dateTo);
+      const query = params.toString() ? `/expenses?${params.toString()}` : '/expenses';
+      const data = await api.get(query);
+      setExpenses(data || []);
     } catch (err) { toast.error(err.message); }
   };
 
   const loadSummary = async () => {
     try {
-      const { data, error } = await supabase.from('expenses').select('*').eq('tenant_id', profile.tenant_id);
-      if (error) { toast.error(error.message); return; }
-      
-      const today = new Date().toISOString().slice(0,10);
-      const thisMonth = today.slice(0,7);
-      
+      const data = await api.get('/expenses');
+
+      const today = new Date().toISOString().slice(0, 10);
+      const thisMonth = today.slice(0, 7);
+
       let sumToday = 0;
       let sumMonth = 0;
       const catTotals = {};
 
-      data.forEach(e => {
+      (data || []).forEach(e => {
         if (e.date === today) sumToday += e.amount;
         if (e.date.startsWith(thisMonth)) sumMonth += e.amount;
         catTotals[e.category] = (catTotals[e.category] || 0) + e.amount;
@@ -104,16 +83,14 @@ export default function Expenses() {
   const save = async () => {
     if (!form.description.trim() || !form.amount) return toast.error('Description and amount required');
     try {
-      const payload = { ...form, amount: parseFloat(form.amount), tenant_id: profile.tenant_id };
+      const payload = { ...form, amount: parseFloat(form.amount) };
       if (!editing) payload.created_by = profile.id;
 
       if (editing) {
-        const { error } = await supabase.from('expenses').update(payload).eq('id', editing.id).eq('tenant_id', profile.tenant_id);
-        if (error) { toast.error(error.message); return; }
+        await api.put('/expenses/' + editing.id, payload);
         toast.success('Expense updated');
       } else {
-        const { error } = await supabase.from('expenses').insert([payload]);
-        if (error) { toast.error(error.message); return; }
+        await api.post('/expenses', payload);
         toast.success('Expense added');
       }
       setShowForm(false);
@@ -125,8 +102,7 @@ export default function Expenses() {
   const remove = async (id) => {
     if (!confirm('Delete this expense?')) return;
     try {
-      const { error } = await supabase.from('expenses').delete().eq('id', id).eq('tenant_id', profile.tenant_id);
-      if (error) { toast.error(error.message); return; }
+      await api.delete('/expenses/' + id);
       toast.success('Deleted');
       loadExpenses();
       loadSummary();

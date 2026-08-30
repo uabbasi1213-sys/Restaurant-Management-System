@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { ChefHat, Clock, CheckCircle2, AlertCircle, RefreshCw, Flame } from 'lucide-react';
@@ -30,72 +30,27 @@ export default function Kitchen() {
   const { profile } = useAuth();
 
   useEffect(() => {
-    if (profile?.tenant_id) {
+    if (profile?.id) {
       loadData();
       // Auto-refresh every 10 seconds
       intervalRef.current = setInterval(loadData, 10000);
     }
     return () => clearInterval(intervalRef.current);
-  }, [profile?.tenant_id]);
+  }, [profile?.id]);
 
   const loadData = async () => {
     try {
-      if (!profile?.tenant_id) return;
-      const { data: ordersData, error } = await supabase
-        .from('orders')
-        .select('*, order_items(*)')
-        .eq('tenant_id', profile.tenant_id)
-        .in('status', ['pending', 'preparing'])
-        .order('created_at', { ascending: true });
+      const data = await api.get('/kitchen/orders');
+      setOrders(data || []);
 
-      if (error) { toast.error(error.message); return; }
-      
-      const ordersList = ordersData || [];
-      // Also fetch items for these orders to map them like the API did
-      // With the `*, order_items(*)` they are joined inside the `order_items` key, we'll map them to `items` for compatibility
-      const mappedOrders = ordersList.map(o => ({
-        ...o,
-        items: o.order_items || []
-      }));
-
-      setOrders(mappedOrders);
-
-      // Fetch stats
-      const statsData = {
-        pending: mappedOrders.filter(o => o.status === 'pending').length,
-        preparing: mappedOrders.filter(o => o.status === 'preparing').length,
-        ready: 0,
-        completed_today: 0
-      };
-
-      const { count: readyCount } = await supabase
-        .from('orders')
-        .select('*', { count: 'exact', head: true })
-        .eq('tenant_id', profile.tenant_id)
-        .eq('status', 'ready');
-      statsData.ready = readyCount || 0;
-
-      const today = new Date();
-      today.setHours(0,0,0,0);
-      const { count: completedCount } = await supabase
-        .from('orders')
-        .select('*', { count: 'exact', head: true })
-        .eq('tenant_id', profile.tenant_id)
-        .eq('status', 'completed')
-        .gte('created_at', today.toISOString());
-      statsData.completed_today = completedCount || 0;
-
-      setStats(statsData);
+      const statsData = await api.get('/kitchen/stats');
+      setStats(statsData || {});
     } catch (err) { /* silent refresh */ }
   };
 
   const updateOrderStatus = async (orderId, status) => {
     try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status })
-        .eq('id', orderId);
-      if (error) { toast.error(error.message); return; }
+      await api.put('/orders/' + orderId, { status });
       toast.success(`Order → ${status}`);
       loadData();
     } catch (err) { toast.error(err.message); }
@@ -103,11 +58,7 @@ export default function Kitchen() {
 
   const updateItemStatus = async (itemId, status) => {
     try {
-      const { error } = await supabase
-        .from('order_items')
-        .update({ status })
-        .eq('id', itemId);
-      if (error) { toast.error(error.message); return; }
+      await api.patch('/kitchen/items/' + itemId + '/status', { status });
       loadData();
     } catch (err) { toast.error(err.message); }
   };

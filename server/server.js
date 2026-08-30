@@ -3,9 +3,17 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
+// Uploads directory: use writable userData path in packaged app
+const uploadsDir = process.env.USER_DATA_PATH
+  ? path.join(process.env.USER_DATA_PATH, 'uploads')
+  : path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+console.log('[Server] Uploads dir:', uploadsDir);
 
 import db from './database.js';
 import authRoutes from './routes/auth.js';
@@ -33,11 +41,11 @@ const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(uploadsDir));
 
 // Serve built client in production (Electron)
-const clientDistPath = path.join(__dirname, '..', 'client', 'dist');
-import fs from 'fs';
+// CLIENT_DIST_PATH is set by main.js pointing to the correct location
+const clientDistPath = process.env.CLIENT_DIST_PATH || path.join(__dirname, '..', 'client', 'dist');
 if (fs.existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
 }
@@ -66,7 +74,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// SPA fallback - serve index.html for all non-API routes
+// SPA fallback
 if (fs.existsSync(clientDistPath)) {
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {

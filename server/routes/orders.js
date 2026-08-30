@@ -67,7 +67,7 @@ router.post('/', authorize('orders', 'pos'), (req, res) => {
   const discountAmount = parseFloat(discount) || 0;
   const total = subtotal + taxAmount - discountAmount;
 
-  const orderResult = db.prepare(`
+  db.prepare(`
     INSERT INTO orders (order_number, order_type, table_number, customer_id, subtotal, tax, discount, total, payment_type, status, special_instructions, restaurant_id, created_by)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
   `).run(
@@ -82,7 +82,14 @@ router.post('/', authorize('orders', 'pos'), (req, res) => {
     req.user.id
   );
 
-  const orderId = orderResult.lastInsertRowid;
+  // Get the actual inserted order ID by querying with unique order_number
+  // This avoids sql.js lastInsertRowid bug
+  const insertedOrder = db.prepare('SELECT id FROM orders WHERE order_number = ?').get(orderNumber);
+  const orderId = insertedOrder ? insertedOrder.id : null;
+
+  if (!orderId) {
+    return res.status(500).json({ error: 'Order saved but ID not found' });
+  }
 
   items.forEach(item => {
     db.prepare(`
@@ -91,7 +98,7 @@ router.post('/', authorize('orders', 'pos'), (req, res) => {
     `).run(
       orderId,
       item.menu_item_id,
-      item.item_name,
+      item.item_name || item.name || 'Item',
       item.quantity,
       item.price,
       item.price * item.quantity,

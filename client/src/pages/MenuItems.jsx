@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, Search, ImageIcon, ToggleLeft, ToggleRight, Upload, Loader2 } from 'lucide-react';
@@ -14,32 +14,28 @@ export default function MenuItems() {
   const [editing, setEditing] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageFile, setImageFile] = useState(null);
   const fileInputRef = useRef(null);
   const [form, setForm] = useState({
     name: '', category_id: '', cost_price: '', sale_price: '', description: '', barcode: '', image: ''
   });
 
   useEffect(() => {
-    if (profile?.tenant_id) {
+    if (profile?.id) {
       loadCategories();
     }
-  }, [profile?.tenant_id]);
+  }, [profile?.id]);
 
   useEffect(() => {
-    if (profile?.tenant_id) {
+    if (profile?.id) {
       loadItems();
     }
-  }, [profile?.tenant_id, selectedCategory, search]);
+  }, [profile?.id, selectedCategory, search]);
 
   const loadCategories = async () => {
     try {
-      const { data, error } = await supabase
-        .from('menu_categories')
-        .select('*')
-        .eq('tenant_id', profile.tenant_id)
-        .order('name');
-      if (error) throw error;
-      setCategories(data);
+      const data = await api.get('/menu/categories');
+      setCategories(data || []);
     } catch (err) {
       toast.error(err.message);
     }
@@ -47,27 +43,12 @@ export default function MenuItems() {
 
   const loadItems = async () => {
     try {
-      let query = supabase
-        .from('menu_items')
-        .select('*, menu_categories(name)')
-        .eq('tenant_id', profile.tenant_id);
-
-      if (selectedCategory) {
-        query = query.eq('category_id', selectedCategory);
-      }
-      if (search) {
-        query = query.ilike('name', `%${search}%`);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      const formatted = data.map(item => ({
-        ...item,
-        category_name: item.menu_categories?.name
-      }));
-
-      setItems(formatted);
+      const params = new URLSearchParams();
+      if (selectedCategory) params.append('category_id', selectedCategory);
+      if (search) params.append('search', search);
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const data = await api.get(`/menu/items${query}`);
+      setItems(data || []);
     } catch (err) {
       toast.error(err.message);
     }
@@ -77,6 +58,7 @@ export default function MenuItems() {
     setEditing(null);
     setForm({ name: '', category_id: categories[0]?.id || '', cost_price: '', sale_price: '', description: '', barcode: '', image: '' });
     setImagePreview('');
+    setImageFile(null);
     setShowModal(true);
   };
 
@@ -92,6 +74,7 @@ export default function MenuItems() {
       image: item.image || ''
     });
     setImagePreview(item.image || '');
+    setImageFile(null);
     setShowModal(true);
   };
 
@@ -111,70 +94,45 @@ export default function MenuItems() {
       return;
     }
 
-    setUploadingImage(true);
-    try {
-      // Unique file name banao
-      const ext = file.name.split('.').pop();
-      const fileName = `${profile.tenant_id}/${Date.now()}.${ext}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('menu-images')
-        .upload(fileName, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      // Public URL lo
-      const { data } = supabase.storage
-        .from('menu-images')
-        .getPublicUrl(fileName);
-
-      const publicUrl = data.publicUrl;
-      setForm(prev => ({ ...prev, image: publicUrl }));
-      setImagePreview(publicUrl);
-      toast.success('Image upload ho gayi!');
-    } catch (err) {
-      toast.error('Image upload fail: ' + err.message);
-    } finally {
-      setUploadingImage(false);
-    }
+    // Store file for submission and show local preview
+    setImageFile(file);
+    const localUrl = URL.createObjectURL(file);
+    setImagePreview(localUrl);
+    toast.success('Image selected!');
   };
 
   const handleRemoveImage = () => {
     setForm(prev => ({ ...prev, image: '' }));
     setImagePreview('');
+    setImageFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const payload = {
-        tenant_id: profile.tenant_id,
-        name: form.name,
-        category_id: form.category_id || null,
-        cost_price: form.cost_price || 0,
-        sale_price: form.sale_price,
-        description: form.description,
-        barcode: form.barcode,
-        image: form.image
-      };
+      const formData = new FormData();
+      formData.append('name', form.name);
+      formData.append('category_id', form.category_id || '');
+      formData.append('cost_price', form.cost_price || 0);
+      formData.append('sale_price', form.sale_price);
+      formData.append('description', form.description);
+      formData.append('barcode', form.barcode);
+      if (imageFile) {
+        formData.append('image', imageFile);
+      } else if (form.image) {
+        formData.append('image_url', form.image);
+      }
 
       if (editing) {
-        const { error } = await supabase
-          .from('menu_items')
-          .update(payload)
-          .eq('id', editing.id)
-          .eq('tenant_id', profile.tenant_id);
-        if (error) throw error;
+        await api.put('/menu/items/' + editing.id, formData);
         toast.success('Menu item updated');
       } else {
-        const { error } = await supabase
-          .from('menu_items')
-          .insert([payload]);
-        if (error) throw error;
+        await api.post('/menu/items', formData);
         toast.success('Menu item created');
       }
       setShowModal(false);
+      setImageFile(null);
       loadItems();
     } catch (err) {
       toast.error(err.message);
@@ -183,12 +141,7 @@ export default function MenuItems() {
 
   const toggleAvailability = async (item) => {
     try {
-      const { error } = await supabase
-        .from('menu_items')
-        .update({ is_available: !item.is_available })
-        .eq('id', item.id)
-        .eq('tenant_id', profile.tenant_id);
-      if (error) throw error;
+      await api.put('/menu/items/' + item.id, { is_available: !item.is_available });
       loadItems();
     } catch (err) {
       toast.error(err.message);
@@ -198,12 +151,7 @@ export default function MenuItems() {
   const handleDelete = async (item) => {
     if (!confirm(`Delete "${item.name}"?`)) return;
     try {
-      const { error } = await supabase
-        .from('menu_items')
-        .delete()
-        .eq('id', item.id)
-        .eq('tenant_id', profile.tenant_id);
-      if (error) throw error;
+      await api.delete('/menu/items/' + item.id);
       toast.success('Item deleted');
       loadItems();
     } catch (err) {

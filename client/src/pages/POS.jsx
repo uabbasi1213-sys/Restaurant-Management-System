@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer } from 'lucide-react';
@@ -17,35 +17,25 @@ export default function POS() {
   const [discount, setDiscount] = useState('');
   const [tax, setTax] = useState('');
   const [specialInstructions, setSpecialInstructions] = useState('');
-  const [showCheckout, setShowCheckout] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(null);
   const [search, setSearch] = useState('');
   const [printOrderId, setPrintOrderId] = useState(null);
 
   useEffect(() => {
-    if (profile?.tenant_id) {
+    if (profile) {
       loadMenu();
     }
-  }, [profile?.tenant_id]);
+  }, [profile?.id]);
 
   const loadMenu = async () => {
     try {
-      const { data: cats, error: catError } = await supabase
-        .from('menu_categories')
-        .select('*')
-        .eq('tenant_id', profile.tenant_id);
-      if (catError) throw catError;
-
-      const { data: items, error: itemError } = await supabase
-        .from('menu_items')
-        .select('*')
-        .eq('tenant_id', profile.tenant_id)
-        .eq('is_available', true);
-      if (itemError) throw itemError;
-
-      setCategories(cats);
-      setMenuItems(items);
-    } catch (err) { toast.error(err.message); }
+      const cats = await api.get('/menu-categories');
+      const items = await api.get('/menu-items?available=true');
+      setCategories(Array.isArray(cats) ? cats : cats.categories || []);
+      setMenuItems(Array.isArray(items) ? items : items.items || []);
+    } catch (err) {
+      toast.error('Failed to load menu: ' + err.message);
+    }
   };
 
   const filteredItems = menuItems.filter(item => {
@@ -101,43 +91,25 @@ export default function POS() {
   const placeOrder = async () => {
     if (cart.length === 0) return toast.error('Cart is empty!');
     try {
-      const orderNumber = `ORD-${Date.now()}`;
-      
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .insert([{
-          tenant_id: profile.tenant_id,
-          order_number: orderNumber,
-          order_type: orderType,
-          table_number: tableNumber || null,
-          total: grandTotal,
-          subtotal: subtotal,
-          discount: discountAmount,
-          tax: taxAmount,
-          payment_type: paymentType,
-          special_instructions: specialInstructions || null,
-          status: 'preparing' // Default status is preparing so it goes to KDS/Orders page
-        }])
-        .select()
-        .single();
-        
-      if (orderError) throw orderError;
-
-      const orderItems = cart.map(item => ({
-        tenant_id: profile.tenant_id,
-        order_id: orderData.id,
-        menu_item_id: item.menu_item_id,
-        item_name: item.item_name,
-        quantity: item.quantity,
-        price: item.price,
-        special_instructions: item.special_instructions || null
-      }));
-
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(orderItems);
-        
-      if (itemsError) throw itemsError;
+      const orderData = await api.post('/orders', {
+        order_type: orderType,
+        table_number: tableNumber || null,
+        total: grandTotal,
+        subtotal: subtotal,
+        discount: discountAmount,
+        tax: taxAmount,
+        payment_type: paymentType,
+        special_instructions: specialInstructions || null,
+        status: 'preparing',
+        items: cart.map(item => ({
+          menu_item_id: item.menu_item_id,
+          item_name: item.item_name,
+          quantity: item.quantity,
+          price: item.price,
+          total: item.total,
+          special_instructions: item.special_instructions || null
+        }))
+      });
 
       setOrderSuccess(orderData);
       setCart([]);
@@ -145,7 +117,6 @@ export default function POS() {
       setTax('');
       setTableNumber('');
       setSpecialInstructions('');
-      setShowCheckout(false);
       toast.success(`Order ${orderData.order_number} placed!`);
     } catch (err) { toast.error(err.message); }
   };

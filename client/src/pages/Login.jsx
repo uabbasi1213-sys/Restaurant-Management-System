@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { UtensilsCrossed, Mail, Lock, ChefHat } from 'lucide-react';
+import { UtensilsCrossed, User, Lock, Monitor } from 'lucide-react';
+
+const isElectron = import.meta.env.VITE_MODE === 'electron';
 
 export default function Login() {
   const { login } = useAuth();
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -13,7 +15,7 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(email, password);
+      await login(username, password);
       toast.success('Login successful!');
     } catch (err) {
       toast.error(err.message || 'Invalid credentials');
@@ -23,17 +25,21 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center',
+      justifyContent: 'center', padding: '16px',
       background: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)'
     }}>
       {/* Animated background blobs */}
       <div style={{
         position: 'fixed', top: '10%', left: '15%', width: '300px', height: '300px',
-        borderRadius: '50%', background: 'rgba(251,146,60,0.08)', filter: 'blur(80px)', pointerEvents: 'none'
+        borderRadius: '50%', background: 'rgba(251,146,60,0.08)',
+        filter: 'blur(80px)', pointerEvents: 'none'
       }} />
       <div style={{
         position: 'fixed', bottom: '15%', right: '10%', width: '400px', height: '400px',
-        borderRadius: '50%', background: 'rgba(139,92,246,0.07)', filter: 'blur(100px)', pointerEvents: 'none'
+        borderRadius: '50%', background: 'rgba(139,92,246,0.07)',
+        filter: 'blur(100px)', pointerEvents: 'none'
       }} />
 
       <div style={{
@@ -41,8 +47,7 @@ export default function Login() {
         background: 'rgba(255,255,255,0.05)',
         backdropFilter: 'blur(20px)',
         border: '1px solid rgba(255,255,255,0.1)',
-        borderRadius: '24px',
-        padding: '48px 40px',
+        borderRadius: '24px', padding: '48px 40px',
         boxShadow: '0 25px 50px rgba(0,0,0,0.5)'
       }}>
         {/* Logo */}
@@ -56,37 +61,42 @@ export default function Login() {
           }}>
             <UtensilsCrossed size={36} color="white" />
           </div>
-          <h1 style={{
-            fontSize: '26px', fontWeight: '700',
-            color: 'white', margin: '0 0 8px'
-          }}>Restaurant Manager</h1>
+          <h1 style={{ fontSize: '26px', fontWeight: '700', color: 'white', margin: '0 0 8px' }}>
+            Restaurant Manager
+          </h1>
           <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '14px', margin: 0 }}>
-            SaaS Platform — Sign in to continue
+            {isElectron ? '💻 Desktop Edition — Offline' : 'SaaS Platform — Sign in to continue'}
           </p>
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit}>
+          {/* Username field */}
           <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', color: 'rgba(255,255,255,0.7)', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
-              Email Address
+            <label style={{
+              display: 'block', color: 'rgba(255,255,255,0.7)',
+              fontSize: '13px', fontWeight: '500', marginBottom: '8px'
+            }}>
+              {isElectron ? 'Username' : 'Email Address'}
             </label>
             <div style={{ position: 'relative' }}>
-              <Mail size={18} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)' }} />
+              <User size={18} style={{
+                position: 'absolute', left: '14px', top: '50%',
+                transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)'
+              }} />
               <input
-                type="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
+                type={isElectron ? 'text' : 'email'}
+                value={username}
+                onChange={e => setUsername(e.target.value)}
                 required
                 autoFocus
-                placeholder="you@restaurant.com"
+                placeholder={isElectron ? 'admin' : 'you@restaurant.com'}
                 style={{
                   width: '100%', padding: '14px 14px 14px 44px',
                   background: 'rgba(255,255,255,0.07)',
                   border: '1px solid rgba(255,255,255,0.12)',
                   borderRadius: '12px', color: 'white', fontSize: '15px',
-                  outline: 'none', boxSizing: 'border-box',
-                  transition: 'border-color 0.2s'
+                  outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.2s'
                 }}
                 onFocus={e => e.target.style.borderColor = 'rgba(249,115,22,0.6)'}
                 onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
@@ -94,12 +104,19 @@ export default function Login() {
             </div>
           </div>
 
+          {/* Password field */}
           <div style={{ marginBottom: '28px' }}>
-            <label style={{ display: 'block', color: 'rgba(255,255,255,0.7)', fontSize: '13px', fontWeight: '500', marginBottom: '8px' }}>
+            <label style={{
+              display: 'block', color: 'rgba(255,255,255,0.7)',
+              fontSize: '13px', fontWeight: '500', marginBottom: '8px'
+            }}>
               Password
             </label>
             <div style={{ position: 'relative' }}>
-              <Lock size={18} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)' }} />
+              <Lock size={18} style={{
+                position: 'absolute', left: '14px', top: '50%',
+                transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)'
+              }} />
               <input
                 type="password"
                 value={password}
@@ -111,8 +128,7 @@ export default function Login() {
                   background: 'rgba(255,255,255,0.07)',
                   border: '1px solid rgba(255,255,255,0.12)',
                   borderRadius: '12px', color: 'white', fontSize: '15px',
-                  outline: 'none', boxSizing: 'border-box',
-                  transition: 'border-color 0.2s'
+                  outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.2s'
                 }}
                 onFocus={e => e.target.style.borderColor = 'rgba(249,115,22,0.6)'}
                 onBlur={e => e.target.style.borderColor = 'rgba(255,255,255,0.12)'}
@@ -125,7 +141,9 @@ export default function Login() {
             disabled={loading}
             style={{
               width: '100%', padding: '15px',
-              background: loading ? 'rgba(249,115,22,0.5)' : 'linear-gradient(135deg, #f97316, #dc2626)',
+              background: loading
+                ? 'rgba(249,115,22,0.5)'
+                : 'linear-gradient(135deg, #f97316, #dc2626)',
               border: 'none', borderRadius: '12px',
               color: 'white', fontSize: '16px', fontWeight: '600',
               cursor: loading ? 'not-allowed' : 'pointer',
@@ -137,16 +155,38 @@ export default function Login() {
           </button>
         </form>
 
+        {/* Footer badge */}
         <div style={{
           marginTop: '24px', padding: '16px',
           background: 'rgba(255,255,255,0.04)',
           border: '1px solid rgba(255,255,255,0.08)',
           borderRadius: '12px', textAlign: 'center'
         }}>
-          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>
-            🔒 Secured by Supabase • Multi-tenant SaaS
-          </p>
+          {isElectron ? (
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>
+              <Monitor size={12} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />
+              Offline Desktop App • Data saved locally on this computer
+            </p>
+          ) : (
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>
+              🔒 Offline Desktop • Local SQLite Database
+            </p>
+          )}
         </div>
+
+        {/* Default credentials hint for desktop */}
+        {isElectron && (
+          <div style={{
+            marginTop: '12px', padding: '12px 16px',
+            background: 'rgba(249,115,22,0.08)',
+            border: '1px solid rgba(249,115,22,0.2)',
+            borderRadius: '10px', textAlign: 'center'
+          }}>
+            <p style={{ color: 'rgba(255,200,100,0.7)', fontSize: '11px', margin: 0 }}>
+              Default: <strong style={{ color: 'rgba(249,180,80,0.9)' }}>admin</strong> / <strong style={{ color: 'rgba(249,180,80,0.9)' }}>admin123</strong>
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Edit2, Trash2, X, TrendingUp } from 'lucide-react';
@@ -32,30 +32,28 @@ export default function Income() {
 
   const loadIncome = async () => {
     try {
-      let query = supabase.from('income').select('*').eq('tenant_id', profile.tenant_id).order('date', { ascending: false });
-      if (filterType) query = query.eq('type', filterType);
-      if (dateFrom) query = query.gte('date', dateFrom);
-      if (dateTo) query = query.lte('date', dateTo);
-      
-      const { data, error } = await query;
-      if (error) { toast.error(error.message); return; }
-      setIncomeList(data);
+      const params = new URLSearchParams();
+      if (filterType) params.append('type', filterType);
+      if (dateFrom) params.append('dateFrom', dateFrom);
+      if (dateTo) params.append('dateTo', dateTo);
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const data = await api.get(`/income${query}`);
+      setIncomeList(data || []);
     } catch (err) { toast.error(err.message); }
   };
 
   const loadSummary = async () => {
     try {
-      const { data, error } = await supabase.from('income').select('*').eq('tenant_id', profile.tenant_id);
-      if (error) { toast.error(error.message); return; }
-      
+      const data = await api.get('/income');
+
       const today = new Date().toISOString().slice(0,10);
       const thisMonth = today.slice(0,7);
-      
+
       let sumToday = 0;
       let sumMonth = 0;
       const typeTotals = {};
 
-      data.forEach(i => {
+      (data || []).forEach(i => {
         if (i.date === today) sumToday += i.amount;
         if (i.date.startsWith(thisMonth)) sumMonth += i.amount;
         typeTotals[i.type] = (typeTotals[i.type] || 0) + i.amount;
@@ -83,16 +81,14 @@ export default function Income() {
   const save = async () => {
     if (!form.type || !form.amount) return toast.error('Type and amount required');
     try {
-      const payload = { ...form, amount: parseFloat(form.amount), tenant_id: profile.tenant_id };
+      const payload = { ...form, amount: parseFloat(form.amount) };
       if (!editing) payload.created_by = profile.id;
 
       if (editing) {
-        const { error } = await supabase.from('income').update(payload).eq('id', editing.id).eq('tenant_id', profile.tenant_id);
-        if (error) { toast.error(error.message); return; }
+        await api.put('/income/' + editing.id, payload);
         toast.success('Income updated');
       } else {
-        const { error } = await supabase.from('income').insert([payload]);
-        if (error) { toast.error(error.message); return; }
+        await api.post('/income', payload);
         toast.success('Income recorded');
       }
       setShowForm(false);
@@ -104,8 +100,7 @@ export default function Income() {
   const remove = async (id) => {
     if (!confirm('Delete this income entry?')) return;
     try {
-      const { error } = await supabase.from('income').delete().eq('id', id).eq('tenant_id', profile.tenant_id);
-      if (error) { toast.error(error.message); return; }
+      await api.delete('/income/' + id);
       toast.success('Deleted');
       loadIncome();
       loadSummary();

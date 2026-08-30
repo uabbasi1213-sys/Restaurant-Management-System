@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, FolderOpen, UtensilsCrossed } from 'lucide-react';
@@ -12,26 +12,15 @@ export default function MenuCategories() {
   const [name, setName] = useState('');
 
   useEffect(() => {
-    if (profile?.tenant_id) {
+    if (profile?.id) {
       loadCategories();
     }
-  }, [profile?.tenant_id]);
+  }, [profile?.id]);
 
   const loadCategories = async () => {
     try {
-      const { data, error } = await supabase
-        .from('menu_categories')
-        .select('*, menu_items(count)')
-        .eq('tenant_id', profile.tenant_id)
-        .order('name');
-      
-      if (error) throw error;
-      
-      const formatted = data.map(cat => ({
-        ...cat,
-        item_count: cat.menu_items[0]?.count || 0
-      }));
-      setCategories(formatted);
+      const data = await api.get('/menu/categories');
+      setCategories(data || []);
     } catch (err) {
       toast.error(err.message);
     }
@@ -53,18 +42,10 @@ export default function MenuCategories() {
     e.preventDefault();
     try {
       if (editing) {
-        const { error } = await supabase
-          .from('menu_categories')
-          .update({ name })
-          .eq('id', editing.id)
-          .eq('tenant_id', profile.tenant_id);
-        if (error) throw error;
+        await api.put('/menu/categories/' + editing.id, { name });
         toast.success('Category updated');
       } else {
-        const { error } = await supabase
-          .from('menu_categories')
-          .insert([{ name, tenant_id: profile.tenant_id }]);
-        if (error) throw error;
+        await api.post('/menu/categories', { name });
         toast.success('Category created');
       }
       setShowModal(false);
@@ -77,12 +58,7 @@ export default function MenuCategories() {
   const handleDelete = async (cat) => {
     if (!confirm(`Delete category "${cat.name}"?`)) return;
     try {
-      const { error } = await supabase
-        .from('menu_categories')
-        .delete()
-        .eq('id', cat.id)
-        .eq('tenant_id', profile.tenant_id);
-      if (error) throw error;
+      await api.delete('/menu/categories/' + cat.id);
       toast.success('Category deleted');
       loadCategories();
     } catch (err) {

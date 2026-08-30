@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, UserCheck, UserX } from 'lucide-react';
@@ -12,29 +12,13 @@ export default function Users() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ username: '', password: '', full_name: '', role_id: '', is_active: true });
 
-  useEffect(() => { if (profile?.tenant_id) loadData(); }, [profile?.tenant_id]);
+  useEffect(() => { if (profile?.id) loadData(); }, [profile?.id]);
 
   const loadData = async () => {
     try {
-      const { data: usersData, error: uErr } = await supabase
-        .from('profiles')
-        .select(`*, roles (name)`)
-        .eq('tenant_id', profile.tenant_id);
-      
-      if (uErr) { toast.error(uErr.message); return; }
-      
-      const { data: rolesData, error: rErr } = await supabase
-        .from('roles')
-        .select('*');
-
-      if (rErr) { toast.error(rErr.message); return; }
-
-      const mappedUsers = usersData?.map(u => ({
-        ...u,
-        role_name: u.roles?.name || 'Unknown'
-      })) || [];
-
-      setUsers(mappedUsers);
+      const usersData = await api.get('/users');
+      const rolesData = await api.get('/roles');
+      setUsers(usersData || []);
       setRoles(rolesData || []);
     } catch (err) {
       toast.error(err.message);
@@ -42,7 +26,9 @@ export default function Users() {
   };
 
   const openAdd = () => {
-    toast.error('New users must be created from the Super Admin panel.');
+    setEditing(null);
+    setForm({ username: '', password: '', full_name: '', role_id: '', is_active: true });
+    setShowModal(true);
   };
 
   const openEdit = (user) => {
@@ -60,20 +46,20 @@ export default function Users() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const payload = {
+        username: form.username,
+        full_name: form.full_name,
+        role_id: form.role_id,
+        is_active: form.is_active,
+      };
+      if (form.password) payload.password = form.password;
+
       if (editing) {
-        const { error } = await supabase
-          .from('profiles')
-          .update({
-            full_name: form.full_name,
-            role_id: form.role_id,
-            is_active: form.is_active
-          })
-          .eq('id', editing.id);
-          
-        if (error) { toast.error(error.message); return; }
+        await api.put('/users/' + editing.id, payload);
         toast.success('User updated');
       } else {
-        toast.error('New users must be created from the Super Admin panel.');
+        await api.post('/users', { ...payload, password: form.password });
+        toast.success('User created');
       }
       setShowModal(false);
       loadData();
@@ -85,12 +71,7 @@ export default function Users() {
   const handleDelete = async (user) => {
     if (!confirm(`Delete user "${user.username || user.full_name}"?`)) return;
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .delete()
-        .eq('id', user.id);
-        
-      if (error) { toast.error(error.message); return; }
+      await api.delete('/users/' + user.id);
       toast.success('User deleted');
       loadData();
     } catch (err) {

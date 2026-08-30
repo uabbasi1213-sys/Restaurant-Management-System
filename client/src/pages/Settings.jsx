@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Upload, Save } from 'lucide-react';
@@ -25,23 +25,9 @@ export default function Settings() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!profile?.tenant_id) return;
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from('tenants')
-        .update(form)
-        .eq('id', profile.tenant_id);
-      
-      if (error) { toast.error(error.message); return; }
-      
-      const { data: updated, error: fetchErr } = await supabase
-        .from('tenants')
-        .select('*')
-        .eq('id', profile.tenant_id)
-        .single();
-      
-      if (fetchErr) { toast.error(fetchErr.message); return; }
+      const updated = await api.put('/restaurant', form);
       updateRestaurant(updated);
       toast.success('Settings updated! Restaurant name will reflect everywhere.');
     } catch (err) {
@@ -53,30 +39,13 @@ export default function Settings() {
 
   const handleLogoUpload = async (e) => {
     const file = e.target.files[0];
-    if (!file || !profile?.tenant_id) return;
+    if (!file) return;
 
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${profile.tenant_id}-${Math.random()}.${fileExt}`;
-      const { error: uploadError } = await supabase.storage
-        .from('logos')
-        .upload(fileName, file);
-
-      if (uploadError) { toast.error(uploadError.message); return; }
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('logos')
-        .getPublicUrl(fileName);
-
-      const { error: updateError } = await supabase
-        .from('tenants')
-        .update({ logo: publicUrl })
-        .eq('id', profile.tenant_id);
-
-      if (updateError) { toast.error(updateError.message); return; }
-
-      setLogoPreview(publicUrl);
-      const { data: updated } = await supabase.from('tenants').select('*').eq('id', profile.tenant_id).single();
+      const formData = new FormData();
+      formData.append('logo', file);
+      const updated = await api.put('/restaurant', formData);
+      setLogoPreview(updated.logo || '');
       updateRestaurant(updated);
       toast.success('Logo uploaded!');
     } catch (err) {

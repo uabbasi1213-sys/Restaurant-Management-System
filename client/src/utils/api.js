@@ -1,7 +1,21 @@
-const BASE_URL = '/api';
+/**
+ * api.js — Centralized API client
+ * Electron mode: calls local Express server at http://localhost:5000
+ * Online/Dev mode: calls /api (proxied to localhost:5000 via Vite)
+ */
+
+const isElectron = import.meta.env.VITE_MODE === 'electron';
+const BASE_URL = isElectron
+  ? (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api'
+  : '/api';
+
+function getToken() {
+  // Electron uses desktop_token, online uses regular token
+  return localStorage.getItem('desktop_token') || localStorage.getItem('token') || '';
+}
 
 async function request(method, path, body) {
-  const token = localStorage.getItem('token');
+  const token = getToken();
   const headers = {};
 
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -13,17 +27,17 @@ async function request(method, path, body) {
     body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined
   });
 
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
 }
 
 const api = {
-  get: (path) => request('GET', path),
-  post: (path, body) => request('POST', path, body),
-  put: (path, body) => request('PUT', path, body),
-  patch: (path, body) => request('PATCH', path, body),
-  delete: (path) => request('DELETE', path)
+  get:    (path)       => request('GET',    path),
+  post:   (path, body) => request('POST',   path, body),
+  put:    (path, body) => request('PUT',    path, body),
+  patch:  (path, body) => request('PATCH',  path, body),
+  delete: (path)       => request('DELETE', path),
 };
 
 export default api;

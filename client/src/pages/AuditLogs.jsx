@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { FileText, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -10,21 +10,14 @@ export default function AuditLogs() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
-  useEffect(() => { if (profile?.tenant_id) loadLogs(); }, [page, profile?.tenant_id]);
+  useEffect(() => { if (profile?.id) loadLogs(); }, [page, profile?.id]);
 
   const loadLogs = async () => {
     try {
-      const { data, error, count } = await supabase
-        .from('audit_logs')
-        .select('*', { count: 'exact' })
-        .eq('tenant_id', profile.tenant_id)
-        .order('created_at', { ascending: false })
-        .range((page - 1) * 20, page * 20 - 1)
-        .limit(100);
-        
-      if (error) { toast.error(error.message); return; }
-      setLogs(data || []);
-      setTotalPages(Math.ceil((count || 0) / 20) || 1);
+      const data = await api.get('/audit-logs?page=' + page + '&limit=50&module=');
+      setLogs(data.logs || data || []);
+      const total = data.total || 0;
+      setTotalPages(Math.ceil(total / 50) || 1);
     } catch (err) {
       toast.error(err.message);
     }

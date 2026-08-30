@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { BarChart3, TrendingUp, TrendingDown, Package, UserCheck, DollarSign, ShoppingCart, CreditCard, Calendar } from 'lucide-react';
@@ -20,169 +20,32 @@ export default function Reports() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => { if (profile?.tenant_id) loadReport(); }, [tab, dateFrom, dateTo, profile?.tenant_id]);
+  useEffect(() => { if (profile) loadReport(); }, [tab, dateFrom, dateTo, profile?.id]);
 
   const loadReport = async () => {
     setLoading(true);
     try {
-      const { tenant_id } = profile;
+      const params = `date_from=${dateFrom}&date_to=${dateTo}`;
       
       if (tab === 'sales') {
-        const { data: orders } = await supabase.from('orders').select('*').eq('tenant_id', tenant_id).gte('created_at', dateFrom).lte('created_at', dateTo + 'T23:59:59');
-        const { data: orderItems } = await supabase.from('order_items').select('*, items(name)').eq('tenant_id', tenant_id).gte('created_at', dateFrom).lte('created_at', dateTo + 'T23:59:59');
-        const { data: payments } = await supabase.from('order_payments').select('*').eq('tenant_id', tenant_id).gte('created_at', dateFrom).lte('created_at', dateTo + 'T23:59:59');
-        
-        const completed = orders?.filter(o => o.status === 'completed') || [];
-        const cancelled = orders?.filter(o => o.status === 'cancelled') || [];
-        const total_sales = completed.reduce((a, b) => a + (b.total_amount || 0), 0);
-        
-        const summary = {
-          total_orders: orders?.length || 0,
-          completed_sales: total_sales,
-          avg_order: completed.length ? total_sales / completed.length : 0,
-          cancelled: cancelled.length,
-          total_sales: total_sales
-        };
-        
-        const byDateMap = {};
-        completed.forEach(o => {
-          const d = o.created_at.slice(0,10);
-          byDateMap[d] = (byDateMap[d] || 0) + (o.total_amount || 0);
-        });
-        const byDate = Object.keys(byDateMap).sort().map(k => ({ period: k, sales: byDateMap[k] }));
-
-        const byTypeMap = {};
-        completed.forEach(o => {
-          byTypeMap[o.order_type] = byTypeMap[o.order_type] || { orders: 0, sales: 0 };
-          byTypeMap[o.order_type].orders++;
-          byTypeMap[o.order_type].sales += (o.total_amount || 0);
-        });
-        const byType = Object.keys(byTypeMap).map(k => ({ order_type: k, ...byTypeMap[k] }));
-
-        const byPaymentMap = {};
-        payments?.forEach(p => {
-          byPaymentMap[p.payment_method] = byPaymentMap[p.payment_method] || { orders: 0, sales: 0 };
-          byPaymentMap[p.payment_method].orders++;
-          byPaymentMap[p.payment_method].sales += (p.amount || 0);
-        });
-        const byPayment = Object.keys(byPaymentMap).map(k => ({ payment_type: k, ...byPaymentMap[k] }));
-
-        const topItemsMap = {};
-        orderItems?.forEach(i => {
-          const name = i.items?.name || 'Unknown';
-          topItemsMap[name] = topItemsMap[name] || { qty: 0, revenue: 0 };
-          topItemsMap[name].qty += i.quantity;
-          topItemsMap[name].revenue += (i.subtotal || 0);
-        });
-        const topItems = Object.keys(topItemsMap).map(k => ({ item_name: k, ...topItemsMap[k] })).sort((a,b) => b.qty - a.qty).slice(0,5);
-
-        setData({ summary, byDate, byType, byPayment, topItems });
+        const result = await api.get(`/reports/sales?${params}`);
+        setData(result);
       } 
       else if (tab === 'profit-loss') {
-        const { data: payments } = await supabase.from('order_payments').select('*').eq('tenant_id', tenant_id).gte('created_at', dateFrom).lte('created_at', dateTo + 'T23:59:59');
-        const { data: income } = await supabase.from('income').select('*').eq('tenant_id', tenant_id).gte('date', dateFrom).lte('date', dateTo);
-        const { data: expenses } = await supabase.from('expenses').select('*').eq('tenant_id', tenant_id).gte('date', dateFrom).lte('date', dateTo);
-
-        const salesIncome = payments?.reduce((a,b) => a + (b.amount || 0), 0) || 0;
-        const otherIncome = income?.reduce((a,b) => a + (b.amount || 0), 0) || 0;
-        const totalIncome = salesIncome + otherIncome;
-        const totalExpense = expenses?.reduce((a,b) => a + (b.amount || 0), 0) || 0;
-        const netProfit = totalIncome - totalExpense;
-        const profitMargin = totalIncome > 0 ? ((netProfit / totalIncome) * 100).toFixed(1) : 0;
-
-        const incomeByTypeMap = {};
-        income?.forEach(i => {
-          incomeByTypeMap[i.category || 'Other'] = (incomeByTypeMap[i.category || 'Other'] || 0) + i.amount;
-        });
-        const incomeByType = Object.keys(incomeByTypeMap).map(k => ({ type: k, total: incomeByTypeMap[k] }));
-
-        const expenseByCategoryMap = {};
-        expenses?.forEach(e => {
-          expenseByCategoryMap[e.category] = (expenseByCategoryMap[e.category] || 0) + e.amount;
-        });
-        const expenseByCategory = Object.keys(expenseByCategoryMap).map(k => ({ category: k, total: expenseByCategoryMap[k] }));
-
-        setData({ totalIncome, salesIncome, otherIncome, totalExpense, netProfit, profitMargin, incomeByType, expenseByCategory });
+        const result = await api.get(`/reports/profit-loss?${params}`);
+        setData(result);
       }
       else if (tab === 'expenses') {
-        const { data: expenses } = await supabase.from('expenses').select('*').eq('tenant_id', tenant_id).gte('date', dateFrom).lte('date', dateTo);
-        
-        const summary = {
-          total: expenses?.reduce((a,b) => a + (b.amount || 0), 0) || 0,
-          count: expenses?.length || 0
-        };
-
-        const byCategoryMap = {};
-        const byDateMap = {};
-        expenses?.forEach(e => {
-          byCategoryMap[e.category] = byCategoryMap[e.category] || { count: 0, total: 0 };
-          byCategoryMap[e.category].count++;
-          byCategoryMap[e.category].total += e.amount;
-          
-          byDateMap[e.date] = (byDateMap[e.date] || 0) + e.amount;
-        });
-        
-        const byCategory = Object.keys(byCategoryMap).map(k => ({ category: k, ...byCategoryMap[k] })).sort((a,b) => b.total - a.total);
-        const byDate = Object.keys(byDateMap).sort().map(k => ({ date: k, total: byDateMap[k] }));
-
-        setData({ summary, byCategory, byDate });
+        const result = await api.get(`/reports/expenses?${params}`);
+        setData(result);
       }
       else if (tab === 'inventory') {
-        const { data: items } = await supabase.from('items').select('*').eq('tenant_id', tenant_id);
-        
-        let totalValue = 0;
-        let lowStock = 0;
-        const mappedItems = items?.map(i => {
-          const is_low = i.current_stock <= i.min_stock;
-          if (is_low) lowStock++;
-          const stock_value = (i.current_stock || 0) * (i.cost_price || 0);
-          totalValue += stock_value;
-          return { ...i, is_low, stock_value };
-        }) || [];
-
-        const summary = {
-          totalItems: mappedItems.length,
-          lowStock,
-          totalValue
-        };
-
-        setData({ summary, items: mappedItems.sort((a,b) => (b.is_low ? 1 : 0) - (a.is_low ? 1 : 0)) });
+        const result = await api.get('/reports/inventory');
+        setData(result);
       }
       else if (tab === 'customers') {
-        const { data: customers } = await supabase.from('customers').select('*').eq('tenant_id', tenant_id);
-        const { data: orders } = await supabase.from('orders').select('*').eq('tenant_id', tenant_id).gte('created_at', dateFrom).lte('created_at', dateTo + 'T23:59:59');
-
-        let total_receivable = 0;
-        let total_advance = 0;
-        customers?.forEach(c => {
-          if (c.balance > 0) total_receivable += c.balance;
-          if (c.balance < 0) total_advance += Math.abs(c.balance);
-        });
-
-        const summary = {
-          total: customers?.length || 0,
-          total_receivable,
-          total_advance
-        };
-
-        const custMap = {};
-        orders?.forEach(o => {
-          if (o.customer_id) {
-            custMap[o.customer_id] = custMap[o.customer_id] || { orders: 0, spent: 0 };
-            custMap[o.customer_id].orders++;
-            custMap[o.customer_id].spent += o.total_amount;
-          }
-        });
-
-        const topCustomers = customers?.filter(c => custMap[c.id]).map(c => ({
-          name: c.name,
-          phone: c.phone,
-          balance: c.balance,
-          orders: custMap[c.id].orders,
-          spent: custMap[c.id].spent
-        })).sort((a,b) => b.spent - a.spent).slice(0, 10) || [];
-
-        setData({ summary, topCustomers });
+        const result = await api.get(`/reports/customers?${params}`);
+        setData(result);
       }
     } catch (err) { toast.error(err.message); }
     setLoading(false);

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, X, Search, AlertTriangle, Package } from 'lucide-react';
@@ -16,26 +16,16 @@ export default function Inventory() {
   const { profile } = useAuth();
 
   useEffect(() => {
-    if (profile?.tenant_id) {
-      loadItems();
-    }
-  }, [profile?.tenant_id]);
+    loadItems();
+  }, []);
 
   const loadItems = async () => {
     try {
-      if (!profile?.tenant_id) return;
-      const { data, error } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('tenant_id', profile.tenant_id);
-
-      if (error) { toast.error(error.message); return; }
-      
-      const itemsWithLowStock = (data || []).map(item => ({
+      const items = await api.get('/inventory');
+      setItems(items.map(item => ({
         ...item,
         is_low_stock: Number(item.quantity) <= Number(item.low_stock_threshold)
-      }));
-      setItems(itemsWithLowStock);
+      })));
     } catch (err) { toast.error(err.message); }
   };
 
@@ -69,17 +59,10 @@ export default function Inventory() {
     e.preventDefault();
     try {
       if (editing) {
-        const { error } = await supabase
-          .from('inventory')
-          .update(form)
-          .eq('id', editing.id);
-        if (error) { toast.error(error.message); return; }
+        await api.put('/inventory/' + editing.id, form);
         toast.success('Stock item updated');
       } else {
-        const { error } = await supabase
-          .from('inventory')
-          .insert([{ ...form, tenant_id: profile.tenant_id }]);
-        if (error) { toast.error(error.message); return; }
+        await api.post('/inventory', form);
         toast.success('Stock item added');
       }
       setShowModal(false);
@@ -90,11 +73,7 @@ export default function Inventory() {
   const handleDelete = async (item) => {
     if (!confirm(`Delete "${item.name}" from inventory?`)) return;
     try {
-      const { error } = await supabase
-        .from('inventory')
-        .delete()
-        .eq('id', item.id);
-      if (error) { toast.error(error.message); return; }
+      await api.delete('/inventory/' + item.id);
       toast.success('Item removed');
       loadItems();
     } catch (err) { toast.error(err.message); }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
+import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import { Printer, X, Settings } from 'lucide-react';
@@ -17,12 +17,7 @@ export default function InvoiceModal({ orderId, onClose }) {
     if (!orderId) return;
     (async () => {
       try {
-        const { data, error } = await supabase
-          .from('orders')
-          .select('*, order_items(*)')
-          .eq('id', orderId)
-          .single();
-        if (error) throw error;
+        const data = await api.get(`/orders/${orderId}`);
         setOrder(data);
       } catch (err) {
         toast.error('Could not load invoice: ' + err.message);
@@ -189,7 +184,8 @@ export default function InvoiceModal({ orderId, onClose }) {
     </div>
   );
 
-  const items = order.order_items || [];
+  // API returns items as 'items' key (from orders route: { ...order, items })
+  const items = order.items || order.order_items || [];
   const restaurant = tenant || {};
 
   return (

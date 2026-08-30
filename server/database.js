@@ -5,7 +5,13 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, 'restaurant.db');
+
+// In packaged Electron app, write DB to userData (writable location)
+// In dev, write next to server.js
+const dbDir = process.env.USER_DATA_PATH || __dirname;
+if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+const dbPath = path.join(dbDir, 'restaurant.db');
+console.log('[DB] Database path:', dbPath);
 
 // sql.js wrapper that mimics better-sqlite3 API
 class DatabaseWrapper {
@@ -37,13 +43,17 @@ class DatabaseWrapper {
         return results;
       },
       run(...params) {
-        self.db.run(sql, params);
-        self._save();
-        const lastId = self.db.exec("SELECT last_insert_rowid()");
-        return {
-          lastInsertRowid: lastId[0]?.values[0]?.[0],
-          changes: self.db.getRowsModified()
-        };
+        try {
+          self.db.run(sql, params);
+          const lastId = self.db.exec('SELECT last_insert_rowid() as lid');
+          const rowid = lastId[0]?.values[0]?.[0] || 0;
+          const changes = self.db.getRowsModified();
+          self._save();
+          return { lastInsertRowid: rowid, changes };
+        } catch(err) {
+          console.error('[DB run error]', sql, err.message);
+          return { lastInsertRowid: 0, changes: 0 };
+        }
       }
     };
   }
@@ -64,7 +74,20 @@ class DatabaseWrapper {
 }
 
 // Initialize sql.js with top-level await
-const SQL = await initSqlJs();
+// In bundled mode: sql-wasm.wasm is copied next to the bundle (__dirname)
+// In dev mode: sql-wasm.wasm is in node_modules/sql.js/dist/
+const sqlJsLocal = path.join(__dirname, 'sql-wasm.wasm');
+const sqlJsWasmDir = fs.existsSync(sqlJsLocal)
+  ? __dirname
+  : path.join(__dirname, 'node_modules', 'sql.js', 'dist');
+
+const SQL = await initSqlJs({
+  locateFile: (file) => {
+    const wasmFile = path.join(sqlJsWasmDir, file);
+    console.log('[DB] Locating WASM:', wasmFile);
+    return wasmFile;
+  }
+});
 let sqlDb;
 if (fs.existsSync(dbPath)) {
   const buffer = fs.readFileSync(dbPath);
@@ -327,9 +350,5 @@ function seedData() {
 
 seedData();
 
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
 export default db;
+
