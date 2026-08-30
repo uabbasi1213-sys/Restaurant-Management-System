@@ -1,7 +1,41 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '../supabase';
 
 const AuthContext = createContext(null);
+
+const isElectron = import.meta.env.VITE_MODE === 'electron';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+// ─── ELECTRON LOCAL API HELPERS ─────────────────────────────────────────────
+async function localAutoLogin() {
+  // Desktop app: auto-login with no credentials needed
+  const res = await fetch(`${API_URL}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) throw new Error('Server error: ' + res.status);
+  return res.json();
+}
+
+async function localLoginWithCredentials(username, password) {
+  const res = await fetch(`${API_URL}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Invalid credentials');
+  return data;
+}
+
+async function localGetMe(token) {
+  const res = await fetch(`${API_URL}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+// ────────────────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -10,112 +44,142 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        fetchProfileAndTenant(session.user);
-      } else {
-        setLoading(false);
-      }
-    });
+    if (isElectron) {
+      // ── Electron: auto-login, no Supabase ──
+      initElectronSession();
+    } else {
+      // ── Online SaaS: Supabase auth ──
+      initSupabaseSession();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        if (session?.user) {
-          await fetchProfileAndTenant(session.user);
-        } else {
-          setUser(null);
-          setProfile(null);
-          setTenant(null);
+  // ─── ELECTRON SESSION ───────────────────────────────────────────────────
+  const initElectronSession = async () => {
+    try {
+      const stored = localStorage.getItem('desktop_token');
+      if (stored) {
+        // Try to restore session from stored token
+        const data = await localGetMe(stored);
+        if (data?.user) {
+          setUser({ id: data.user.id, username: data.user.username });
+          setProfile({
+            id: data.user.id,
+            username: data.user.username,
+            full_name: data.user.full_name,
+            role: data.user.role,
+            permissions: data.user.permissions || [],
+          });
+          setTenant(data.restaurant || null);
           setLoading(false);
+          return;
         }
       }
-    );
+      // Auto-login (no credentials needed for desktop)
+      const data = await localAutoLogin();
+      localStorage.setItem('desktop_token', data.token);
+      setUser({ id: data.user.id, username: data.user.username });
+      setProfile({
+        id: data.user.id,
+        username: data.user.username,
+        full_name: data.user.full_name,
+        role: data.user.role,
+        permissions: data.user.permissions || [],
+      });
+    } catch (err) {
+      console.error('[Desktop] Auto-login failed:', err.message);
+      // Server not yet ready — will retry on login page
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return () => subscription.unsubscribe();
-  }, []);
+  // ─── SUPABASE SESSION (Online SaaS only) ────────────────────────────────
+  const initSupabaseSession = async () => {
+    try {
+      const { supabase } = await import('../supabase');
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user) fetchProfileAndTenant(session.user);
+        else setLoading(false);
+      });
+
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (_event, session) => {
+          if (session?.user) await fetchProfileAndTenant(session.user);
+          else {
+            setUser(null); setProfile(null); setTenant(null);
+            setLoading(false);
+          }
+        }
+      );
+      return () => subscription.unsubscribe();
+    } catch (err) {
+      console.error('Supabase init failed:', err);
+      setLoading(false);
+    }
+  };
 
   const fetchProfileAndTenant = async (authUser) => {
     try {
+      const { supabase } = await import('../supabase');
       setUser(authUser);
 
-      // Fetch profile
       const { data: profileData, error: profileError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authUser.id)
-        .maybeSingle(); // Use maybeSingle so it doesn't throw if no row found
+        .from('profiles').select('*').eq('id', authUser.id).maybeSingle();
 
       if (profileError) throw profileError;
 
       if (!profileData) {
-        // Profile not yet created — try to create from user metadata
         const meta = authUser.user_metadata || {};
         if (meta.tenant_id) {
           const { data: newProfile, error: insertError } = await supabase
-            .from('profiles')
-            .upsert({
+            .from('profiles').upsert({
               id: authUser.id,
               full_name: meta.full_name || authUser.email,
               email: authUser.email,
               role: meta.role || 'admin',
               tenant_id: meta.tenant_id,
               is_active: true
-            }, { onConflict: 'id' })
-            .select()
-            .single();
+            }, { onConflict: 'id' }).select().single();
 
           if (insertError) {
-            console.error('Profile creation failed:', insertError.message);
-            // Still set basic profile so user isn't stuck
             setProfile({
-              id: authUser.id,
-              email: authUser.email,
+              id: authUser.id, email: authUser.email,
               full_name: meta.full_name || authUser.email,
-              role: meta.role || 'admin',
-              tenant_id: meta.tenant_id
+              role: meta.role || 'admin', tenant_id: meta.tenant_id
             });
-            // Fetch tenant separately
-            const { data: tenantData } = await supabase
-              .from('tenants')
-              .select('*')
-              .eq('id', meta.tenant_id)
-              .single();
+            const { data: tenantData } = await supabase.from('tenants')
+              .select('*').eq('id', meta.tenant_id).single();
             if (tenantData) setTenant(tenantData);
           } else {
             setProfile(newProfile);
             if (newProfile?.tenant_id) {
-              const { data: tenantData } = await supabase
-                .from('tenants')
-                .select('*')
-                .eq('id', newProfile.tenant_id)
-                .single();
+              const { data: tenantData } = await supabase.from('tenants')
+                .select('*').eq('id', newProfile.tenant_id).single();
               if (tenantData) setTenant(tenantData);
             }
           }
         } else {
-          // super_admin or unlinked user — set basic profile from auth data
+          // No tenant_id = this is a super_admin account
           setProfile({
-            id: authUser.id,
-            email: authUser.email,
+            id: authUser.id, email: authUser.email,
             full_name: authUser.user_metadata?.full_name || authUser.email,
-            role: authUser.user_metadata?.role || 'super_admin',
+            role: 'super_admin',
             tenant_id: null
           });
         }
         return;
       }
 
-      setProfile(profileData);
-
-      // Fetch tenant if not super_admin (or fetch own tenant)
+      // If profile has no tenant_id, it's a super_admin account
+      if (!profileData.tenant_id) {
+        setProfile({ ...profileData, role: 'super_admin' });
+      } else {
+        setProfile(profileData);
+      }
       if (profileData?.tenant_id) {
         const { data: tenantData, error: tenantError } = await supabase
-          .from('tenants')
-          .select('*')
-          .eq('id', profileData.tenant_id)
-          .single();
+          .from('tenants').select('*').eq('id', profileData.tenant_id).single();
         if (!tenantError) setTenant(tenantData);
       }
     } catch (err) {
@@ -125,31 +189,57 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const login = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
-    return data;
+  // ─── LOGIN ───────────────────────────────────────────────────────────────
+  const login = async (usernameOrEmail, password) => {
+    if (isElectron) {
+      const data = await localLoginWithCredentials(usernameOrEmail, password);
+      localStorage.setItem('desktop_token', data.token);
+      setUser({ id: data.user.id, username: data.user.username });
+      setProfile({
+        id: data.user.id,
+        username: data.user.username,
+        full_name: data.user.full_name,
+        role: data.user.role,
+        permissions: data.user.permissions || [],
+      });
+      return data;
+    } else {
+      const { supabase } = await import('../supabase');
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: usernameOrEmail, password
+      });
+      if (error) throw new Error(error.message);
+      return data;
+    }
   };
 
+  // ─── LOGOUT ──────────────────────────────────────────────────────────────
   const logout = async () => {
-    await supabase.auth.signOut();
+    if (isElectron) {
+      localStorage.removeItem('desktop_token');
+      setUser(null); setProfile(null); setTenant(null);
+    } else {
+      const { supabase } = await import('../supabase');
+      await supabase.auth.signOut();
+    }
   };
 
   const updateTenant = (data) => setTenant(data);
 
-  const isSuperAdmin = profile?.role === 'super_admin';
-  const isAdmin = profile?.role === 'admin' || isSuperAdmin;
+  // ─── PERMISSION HELPERS ───────────────────────────────────────────────────
+  const isSuperAdmin = profile?.role === 'super_admin' || profile?.role === 'Super Admin';
+  const isAdmin = profile?.role === 'admin' || profile?.role === 'Admin' || isSuperAdmin;
+
   const hasPermission = (perm) => {
     if (isSuperAdmin) return true;
-    // Admin with no specific permissions set → grant everything
     if (isAdmin) {
-      if (!profile?.permissions || profile.permissions === '[]' || 
-          (Array.isArray(profile.permissions) && profile.permissions.length === 0)) {
+      if (!profile?.permissions || (Array.isArray(profile.permissions) && profile.permissions.length === 0))
         return true;
-      }
     }
     if (!profile?.permissions) return false;
-    const perms = Array.isArray(profile.permissions) ? profile.permissions : JSON.parse(profile.permissions || '[]');
+    const perms = Array.isArray(profile.permissions)
+      ? profile.permissions
+      : JSON.parse(profile.permissions || '[]');
     return perms.includes(perm) || perms.includes('all');
   };
 
@@ -157,7 +247,8 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user, profile, tenant, loading,
       login, logout, updateTenant,
-      isSuperAdmin, isAdmin, hasPermission
+      isSuperAdmin, isAdmin, hasPermission,
+      isElectron,
     }}>
       {children}
     </AuthContext.Provider>
