@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+﻿import { Routes, Route, Navigate } from 'react-router-dom';
 
 const isElectron = import.meta.env.VITE_MODE === 'electron';
 import { useAuth } from './context/AuthContext';
@@ -25,7 +25,7 @@ import Reports from './pages/Reports';
 import Backups from './pages/Backups';
 
 function PrivateRoute({ children, requireSuperAdmin = false }) {
-  const { user, profile, loading } = useAuth();
+  const { user, isSuperAdmin, loading } = useAuth();
 
   if (loading) {
     return (
@@ -53,7 +53,7 @@ function PrivateRoute({ children, requireSuperAdmin = false }) {
   // Electron desktop: no super-admin panel
   if (isElectron && requireSuperAdmin) return <Navigate to="/" replace />;
 
-  if (requireSuperAdmin && profile?.role !== 'super_admin') {
+  if (requireSuperAdmin && !isSuperAdmin) {
     return <Navigate to="/" replace />;
   }
 
@@ -61,7 +61,7 @@ function PrivateRoute({ children, requireSuperAdmin = false }) {
 }
 
 export default function App() {
-  const { user, profile, loading } = useAuth();
+  const { user, isSuperAdmin, loading } = useAuth();
 
   if (loading) {
     return (
@@ -93,7 +93,7 @@ export default function App() {
         path="/login"
         element={
           user
-            ? <Navigate to="/" replace />
+            ? (isSuperAdmin ? <Navigate to="/super-admin" replace /> : <Navigate to="/" replace />)
             : <Login />
         }
       />
@@ -112,7 +112,7 @@ export default function App() {
       <Route
         element={
           <PrivateRoute>
-            {profile?.role === 'super_admin'
+            {isSuperAdmin
               ? <Navigate to="/super-admin" replace />
               : <Layout />
             }

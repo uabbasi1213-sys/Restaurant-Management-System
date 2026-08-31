@@ -93,13 +93,15 @@ export function AuthProvider({ children }) {
   const fetchProfileAndTenant = async (authUser) => {
     try {
       setUser(authUser);
+      const isSuperUserEmail = authUser.email?.toLowerCase() === 'admin@restaurant.com';
+
       const { data: profileData, error: profileError } = await supabase
         .from('profiles').select('*').eq('id', authUser.id).maybeSingle();
       if (profileError) throw profileError;
 
       if (!profileData) {
         const meta = authUser.user_metadata || {};
-        if (meta.tenant_id) {
+        if (meta.tenant_id && !isSuperUserEmail) {
           const { data: newProfile, error: insertError } = await supabase
             .from('profiles').upsert({ id: authUser.id, full_name: meta.full_name || authUser.email, role: meta.role || 'admin', tenant_id: meta.tenant_id, is_active: true }, { onConflict: 'id' }).select().single();
           if (insertError) {
@@ -119,12 +121,12 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      if (!profileData.tenant_id) {
-        setProfile({ ...profileData, role: 'super_admin' });
+      if (isSuperUserEmail || !profileData.tenant_id || profileData.role === 'super_admin') {
+        setProfile({ ...profileData, email: authUser.email, role: 'super_admin', tenant_id: null });
       } else {
         setProfile(profileData);
       }
-      if (profileData?.tenant_id) {
+      if (profileData?.tenant_id && !isSuperUserEmail && profileData.role !== 'super_admin') {
         const { data: tenantData, error: tenantError } = await supabase.from('tenants').select('*').eq('id', profileData.tenant_id).single();
         if (!tenantError) setTenant(tenantData);
       }
@@ -159,7 +161,7 @@ export function AuthProvider({ children }) {
   };
 
   const updateTenant = (data) => setTenant(data);
-  const isSuperAdmin = profile?.role === 'super_admin' || profile?.role === 'Super Admin';
+  const isSuperAdmin = profile?.role === 'super_admin' || profile?.role === 'Super Admin' || !profile?.tenant_id || user?.email?.toLowerCase() === 'admin@restaurant.com';
   const isAdmin = profile?.role === 'admin' || profile?.role === 'Admin' || isSuperAdmin;
 
   const hasPermission = (perm) => {
