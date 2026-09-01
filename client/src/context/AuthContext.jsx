@@ -1,4 +1,4 @@
-﻿import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect } from 'react';
 import { supabase } from '../supabase';
 
 const AuthContext = createContext(null);
@@ -121,7 +121,10 @@ export function AuthProvider({ children }) {
         return;
       }
 
-      if (isSuperUserEmail || !profileData.tenant_id || profileData.role === 'super_admin') {
+      // ✅ FIX: admin@restaurant.com HAMESHA super_admin hoga
+      if (isSuperUserEmail) {
+        setProfile({ ...profileData, email: authUser.email, role: 'super_admin', tenant_id: null });
+      } else if (!profileData.tenant_id || profileData.role === 'super_admin') {
         setProfile({ ...profileData, email: authUser.email, role: 'super_admin', tenant_id: null });
       } else {
         setProfile(profileData);
