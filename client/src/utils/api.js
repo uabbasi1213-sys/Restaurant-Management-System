@@ -29,6 +29,20 @@ async function getTenantId() {
   return null;
 }
 
+function bodyToPayload(body) {
+  if (!body) return {};
+  if (body instanceof FormData) {
+    const payload = {};
+    for (const [key, value] of body.entries()) {
+      if (!(value instanceof File)) {
+        payload[key] = value;
+      }
+    }
+    return payload;
+  }
+  return typeof body === 'object' ? { ...body } : {};
+}
+
 async function requestHTTP(method, path, body) {
   const token = getToken();
   const headers = {};
@@ -80,10 +94,15 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
   }
 
   if (method === 'POST') {
-    const payload = typeof body === 'object' && body !== null ? { ...body } : {};
+    const payload = bodyToPayload(body);
     if (tenant_id && !payload.tenant_id && tableName !== 'tenants') {
       payload.tenant_id = tenant_id;
     }
+    if (payload.cost_price !== undefined) payload.cost_price = Number(payload.cost_price) || 0;
+    if (payload.sale_price !== undefined) payload.sale_price = Number(payload.sale_price) || 0;
+    if (payload.price !== undefined) payload.price = Number(payload.price) || 0;
+    if (payload.amount !== undefined) payload.amount = Number(payload.amount) || 0;
+
     const { data, error } = await supabase.from(tableName).insert([payload]).select();
     if (error) {
       console.error(`Supabase INSERT ${tableName} error:`, error.message);
@@ -96,8 +115,13 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
   const id = pathParts[pathParts.length - 1];
 
   if (method === 'PUT' || method === 'PATCH') {
-    const payload = typeof body === 'object' && body !== null ? { ...body } : {};
+    const payload = bodyToPayload(body);
     delete payload.id;
+    if (payload.cost_price !== undefined) payload.cost_price = Number(payload.cost_price) || 0;
+    if (payload.sale_price !== undefined) payload.sale_price = Number(payload.sale_price) || 0;
+    if (payload.price !== undefined) payload.price = Number(payload.price) || 0;
+    if (payload.amount !== undefined) payload.amount = Number(payload.amount) || 0;
+
     let query = supabase.from(tableName).update(payload).eq('id', id);
     if (tenant_id && tableName !== 'tenants') {
       query = query.eq('tenant_id', tenant_id);
