@@ -121,6 +121,10 @@ export function AuthProvider({ children }) {
         return;
       }
 
+      if (profileData?.tenant_id) {
+        localStorage.setItem('tenant_id', profileData.tenant_id);
+      }
+
       // ✅ FIX: admin@restaurant.com HAMESHA super_admin hoga
       if (isSuperUserEmail) {
         setProfile({ ...profileData, email: authUser.email, role: 'super_admin', tenant_id: null });

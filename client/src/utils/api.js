@@ -9,6 +9,26 @@ function getToken() {
   return localStorage.getItem('desktop_token') || localStorage.getItem('token') || '';
 }
 
+async function getTenantId() {
+  const stored = localStorage.getItem('tenant_id');
+  if (stored) return stored;
+  if (supabase) {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).maybeSingle();
+        if (prof?.tenant_id) {
+          localStorage.setItem('tenant_id', prof.tenant_id);
+          return prof.tenant_id;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 async function requestHTTP(method, path, body) {
   const token = getToken();
   const headers = {};
@@ -38,6 +58,72 @@ async function requestHTTP(method, path, body) {
   return data;
 }
 
+// Generic Supabase Table Helper for Online SaaS Mode
+async function supabaseTableOp(tableName, method, path, body, orderCol = 'created_at') {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0];
+
+  if (method === 'GET') {
+    let query = supabase.from(tableName).select('*');
+    if (tenant_id && tableName !== 'tenants') {
+      query = query.eq('tenant_id', tenant_id);
+    }
+    if (orderCol) {
+      query = query.order(orderCol, { ascending: false });
+    }
+    const { data, error } = await query;
+    if (error) {
+      console.warn(`Supabase SELECT ${tableName} error:`, error.message);
+      return [];
+    }
+    return data || [];
+  }
+
+  if (method === 'POST') {
+    const payload = typeof body === 'object' && body !== null ? { ...body } : {};
+    if (tenant_id && !payload.tenant_id && tableName !== 'tenants') {
+      payload.tenant_id = tenant_id;
+    }
+    const { data, error } = await supabase.from(tableName).insert([payload]).select();
+    if (error) {
+      console.error(`Supabase INSERT ${tableName} error:`, error.message);
+      throw new Error(error.message);
+    }
+    return data ? data[0] : payload;
+  }
+
+  const pathParts = cleanPath.split('/');
+  const id = pathParts[pathParts.length - 1];
+
+  if (method === 'PUT' || method === 'PATCH') {
+    const payload = typeof body === 'object' && body !== null ? { ...body } : {};
+    delete payload.id;
+    let query = supabase.from(tableName).update(payload).eq('id', id);
+    if (tenant_id && tableName !== 'tenants') {
+      query = query.eq('tenant_id', tenant_id);
+    }
+    const { data, error } = await query.select();
+    if (error) {
+      console.error(`Supabase UPDATE ${tableName} error:`, error.message);
+      throw new Error(error.message);
+    }
+    return { message: 'Updated successfully', data: data ? data[0] : null };
+  }
+
+  if (method === 'DELETE') {
+    let query = supabase.from(tableName).delete().eq('id', id);
+    if (tenant_id && tableName !== 'tenants') {
+      query = query.eq('tenant_id', tenant_id);
+    }
+    const { error } = await query;
+    if (error) {
+      console.error(`Supabase DELETE ${tableName} error:`, error.message);
+      throw new Error(error.message);
+    }
+    return { message: 'Deleted successfully' };
+  }
+}
+
 // Supabase Online Mode Router for Web/SaaS Edition
 async function requestSupabase(method, path, body) {
   if (!supabase) return requestHTTP(method, path, body);
@@ -45,19 +131,7 @@ async function requestSupabase(method, path, body) {
   const cleanPath = path.split('?')[0];
 
   try {
-    // Users & Roles
-    if (cleanPath === '/users' || cleanPath === '/api/users') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return (data || []).map(u => ({ ...u, username: u.email || u.full_name, role_name: u.role || 'Staff' }));
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('profiles').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
-    }
+    // Roles
     if (cleanPath === '/roles' || cleanPath === '/users/roles') {
       return [
         { id: 'admin', name: 'Admin' },
@@ -66,231 +140,60 @@ async function requestSupabase(method, path, body) {
         { id: 'staff', name: 'Staff' }
       ];
     }
-    if (cleanPath.startsWith('/users/')) {
-      const id = cleanPath.replace('/users/', '');
-      if (method === 'PUT' || method === 'PATCH') {
-        const { error } = await supabase.from('profiles').update(body).eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'User updated' };
-      }
-      if (method === 'DELETE') {
-        const { error } = await supabase.from('profiles').delete().eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'User deleted' };
-      }
+
+    // Users
+    if (cleanPath.startsWith('/users')) {
+      return await supabaseTableOp('profiles', method, path, body);
     }
 
     // Menu Categories
-    if (cleanPath === '/menu/categories') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('menu_categories').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('menu_categories').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
-    }
-    if (cleanPath.startsWith('/menu/categories/')) {
-      const id = cleanPath.replace('/menu/categories/', '');
-      if (method === 'PUT' || method === 'PATCH') {
-        const { error } = await supabase.from('menu_categories').update(body).eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Category updated' };
-      }
-      if (method === 'DELETE') {
-        const { error } = await supabase.from('menu_categories').delete().eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Category deleted' };
-      }
+    if (cleanPath.startsWith('/menu/categories')) {
+      return await supabaseTableOp('menu_categories', method, path, body);
     }
 
     // Menu Items
-    if (cleanPath === '/menu/items') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('menu_items').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('menu_items').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
-    }
-    if (cleanPath.startsWith('/menu/items/')) {
-      const id = cleanPath.replace('/menu/items/', '');
-      if (method === 'PUT' || method === 'PATCH') {
-        const { error } = await supabase.from('menu_items').update(body).eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Item updated' };
-      }
-      if (method === 'DELETE') {
-        const { error } = await supabase.from('menu_items').delete().eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Item deleted' };
-      }
+    if (cleanPath.startsWith('/menu/items')) {
+      return await supabaseTableOp('menu_items', method, path, body);
     }
 
     // Inventory
-    if (cleanPath === '/inventory') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('inventory').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('inventory').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
-    }
-    if (cleanPath.startsWith('/inventory/')) {
-      const id = cleanPath.replace('/inventory/', '');
-      if (method === 'PUT' || method === 'PATCH') {
-        const { error } = await supabase.from('inventory').update(body).eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Inventory updated' };
-      }
-      if (method === 'DELETE') {
-        const { error } = await supabase.from('inventory').delete().eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Inventory deleted' };
-      }
+    if (cleanPath.startsWith('/inventory')) {
+      return await supabaseTableOp('inventory', method, path, body);
     }
 
     // Suppliers
-    if (cleanPath === '/suppliers') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('suppliers').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('suppliers').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
-    }
-    if (cleanPath.startsWith('/suppliers/')) {
-      const id = cleanPath.replace('/suppliers/', '');
-      if (method === 'PUT' || method === 'PATCH') {
-        const { error } = await supabase.from('suppliers').update(body).eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Supplier updated' };
-      }
-      if (method === 'DELETE') {
-        const { error } = await supabase.from('suppliers').delete().eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Supplier deleted' };
-      }
+    if (cleanPath.startsWith('/suppliers')) {
+      return await supabaseTableOp('suppliers', method, path, body);
     }
 
     // Purchases
-    if (cleanPath === '/purchases') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('purchases').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('purchases').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
+    if (cleanPath.startsWith('/purchases')) {
+      return await supabaseTableOp('purchases', method, path, body);
     }
 
     // Orders & Kitchen
-    if (cleanPath === '/orders' || cleanPath === '/kitchen') {
-      if (method === 'GET') {
-        let query = supabase.from('orders').select('*').order('created_at', { ascending: false });
-        if (cleanPath === '/kitchen') query = query.in('status', ['pending', 'preparing', 'ready']);
-        const { data, error } = await query;
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('orders').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
-    }
-    if (cleanPath.startsWith('/orders/')) {
-      const id = cleanPath.replace('/orders/', '');
-      if (method === 'PUT' || method === 'PATCH') {
-        const { error } = await supabase.from('orders').update(body).eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Order updated' };
-      }
+    if (cleanPath.startsWith('/orders') || cleanPath.startsWith('/kitchen')) {
+      return await supabaseTableOp('orders', method, path, body);
     }
 
     // Customers
-    if (cleanPath === '/customers') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('customers').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('customers').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
-    }
-    if (cleanPath.startsWith('/customers/')) {
-      const id = cleanPath.replace('/customers/', '');
-      if (method === 'PUT' || method === 'PATCH') {
-        const { error } = await supabase.from('customers').update(body).eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Customer updated' };
-      }
-      if (method === 'DELETE') {
-        const { error } = await supabase.from('customers').delete().eq('id', id);
-        if (error) throw new Error(error.message);
-        return { message: 'Customer deleted' };
-      }
+    if (cleanPath.startsWith('/customers')) {
+      return await supabaseTableOp('customers', method, path, body);
     }
 
-    // Expenses & Income
-    if (cleanPath === '/expenses') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('expenses').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('expenses').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
+    // Expenses
+    if (cleanPath.startsWith('/expenses')) {
+      return await supabaseTableOp('expenses', method, path, body);
     }
-    if (cleanPath === '/income') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('income').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('income').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
+
+    // Income
+    if (cleanPath.startsWith('/income')) {
+      return await supabaseTableOp('income', method, path, body);
     }
 
     // Daily Closing
-    if (cleanPath === '/daily-closing') {
-      if (method === 'GET') {
-        const { data, error } = await supabase.from('daily_closings').select('*').order('created_at', { ascending: false });
-        if (error) return [];
-        return data || [];
-      }
-      if (method === 'POST') {
-        const { data, error } = await supabase.from('daily_closings').insert([body]).select();
-        if (error) throw new Error(error.message);
-        return data[0];
-      }
+    if (cleanPath.startsWith('/daily-closing')) {
+      return await supabaseTableOp('daily_closings', method, path, body);
     }
 
     // Dashboard Stats
@@ -314,12 +217,11 @@ async function requestSupabase(method, path, body) {
       };
     }
 
-    // Fallbacks for audit-logs, backups, etc.
+    // Fallbacks
     if (cleanPath === '/audit-logs' || cleanPath === '/backups') {
       return [];
     }
 
-    // Fallback try HTTP request if endpoint not matched above
     return await requestHTTP(method, path, body);
   } catch (err) {
     console.warn(`[Supabase API Adapter] ${method} ${path} error:`, err.message);
