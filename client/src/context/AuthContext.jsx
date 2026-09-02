@@ -135,6 +135,10 @@ export function AuthProvider({ children }) {
       }
     } catch (err) {
       console.error('Failed to fetch profile:', err.message);
+      // ✅ FIX: Profile fetch fail hone par user ko reset karo - white screen prevent
+      setUser(null);
+      setProfile(null);
+      setTenant(null);
     } finally {
       setLoading(false);
     }
@@ -164,7 +168,12 @@ export function AuthProvider({ children }) {
   };
 
   const updateTenant = (data) => setTenant(data);
-  const isSuperAdmin = profile?.role === 'super_admin' || profile?.role === 'Super Admin' || !profile?.tenant_id || user?.email?.toLowerCase() === 'admin@restaurant.com';
+  // ✅ FIX: profile null hone par isSuperAdmin kabhi true nahi hoga (routing loop prevent)
+  const isSuperAdmin = !!profile && (
+    profile?.role === 'super_admin' ||
+    profile?.role === 'Super Admin' ||
+    user?.email?.toLowerCase() === 'admin@restaurant.com'
+  );
   const isAdmin = profile?.role === 'admin' || profile?.role === 'Admin' || isSuperAdmin;
 
   const hasPermission = (perm) => {
