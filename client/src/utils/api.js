@@ -191,12 +191,12 @@ async function requestSupabase(method, path, body) {
     }
 
     // Menu Categories
-    if (cleanPath.startsWith('/menu/categories')) {
+    if (cleanPath.startsWith('/menu/categories') || cleanPath.startsWith('/menu-categories') || cleanPath.startsWith('/categories')) {
       return await supabaseTableOp('menu_categories', method, path, body);
     }
 
     // Menu Items
-    if (cleanPath.startsWith('/menu/items')) {
+    if (cleanPath.startsWith('/menu/items') || cleanPath.startsWith('/menu-items') || cleanPath.startsWith('/items')) {
       return await supabaseTableOp('menu_items', method, path, body);
     }
 
