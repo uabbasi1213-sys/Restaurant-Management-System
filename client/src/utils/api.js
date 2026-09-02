@@ -7,10 +7,9 @@
 const isElectron = import.meta.env.VITE_MODE === 'electron';
 const BASE_URL = isElectron
   ? (import.meta.env.VITE_API_URL || 'http://localhost:5000') + '/api'
-  : '/api';
+  : (import.meta.env.VITE_API_URL || '/api');
 
 function getToken() {
-  // Electron uses desktop_token, online uses regular token
   return localStorage.getItem('desktop_token') || localStorage.getItem('token') || '';
 }
 
@@ -27,8 +26,19 @@ async function request(method, path, body) {
     body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined
   });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('text/html')) {
+    throw new Error('API server unavailable or returned HTML');
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error('Invalid response format from server');
+  }
+
+  if (!res.ok) throw new Error(data?.error || 'Request failed');
   return data;
 }
 

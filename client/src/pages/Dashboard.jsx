@@ -28,6 +28,9 @@ export default function Dashboard() {
   const loadDashboard = async () => {
     try {
       const result = await api.get('/dashboard/stats');
+      if (!result || typeof result !== 'object' || !result.todaySales) {
+        throw new Error('Invalid stats payload received');
+      }
       setData(result);
     } catch (err) {
       console.error('Dashboard error:', err.message);
@@ -59,18 +62,27 @@ export default function Dashboard() {
     </div>
   );
 
+  const todaySalesTotal = data.todaySales?.total || 0;
+  const todaySalesCount = data.todaySales?.count || 0;
+  const todayOrdersTotal = data.todayOrders?.total || 0;
+  const todayOrdersPending = data.todayOrders?.pending || 0;
+  const todayOrdersPreparing = data.todayOrders?.preparing || 0;
+  const todayProfit = data.todayProfit || 0;
+  const lowStock = data.lowStock || 0;
+  const monthlySalesTotal = data.monthlySales?.total || 0;
+
   const statCards = [
-    { label: "Today's Sales", value: `Rs. ${data.todaySales.total.toFixed(0)}`, sub: `${data.todaySales.count} orders`, icon: DollarSign, color: 'bg-green-500', text: 'text-green-600' },
-    { label: "Today's Orders", value: data.todayOrders.total, sub: `${data.todayOrders.pending} pending · ${data.todayOrders.preparing} cooking`, icon: ShoppingCart, color: 'bg-blue-500', text: 'text-blue-600' },
-    { label: "Today's Profit", value: `Rs. ${data.todayProfit.toFixed(0)}`, sub: `Income - Expenses`, icon: data.todayProfit >= 0 ? TrendingUp : TrendingDown, color: data.todayProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500', text: data.todayProfit >= 0 ? 'text-emerald-600' : 'text-red-600' },
-    { label: 'Low Stock', value: data.lowStock, sub: 'items below minimum', icon: AlertTriangle, color: data.lowStock > 0 ? 'bg-red-500' : 'bg-gray-400', text: data.lowStock > 0 ? 'text-red-600' : 'text-gray-500' },
+    { label: "Today's Sales", value: `Rs. ${todaySalesTotal.toFixed(0)}`, sub: `${todaySalesCount} orders`, icon: DollarSign, color: 'bg-green-500', text: 'text-green-600' },
+    { label: "Today's Orders", value: todayOrdersTotal, sub: `${todayOrdersPending} pending · ${todayOrdersPreparing} cooking`, icon: ShoppingCart, color: 'bg-blue-500', text: 'text-blue-600' },
+    { label: "Today's Profit", value: `Rs. ${todayProfit.toFixed(0)}`, sub: `Income - Expenses`, icon: todayProfit >= 0 ? TrendingUp : TrendingDown, color: todayProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500', text: todayProfit >= 0 ? 'text-emerald-600' : 'text-red-600' },
+    { label: 'Low Stock', value: lowStock, sub: 'items below minimum', icon: AlertTriangle, color: lowStock > 0 ? 'bg-red-500' : 'bg-gray-400', text: lowStock > 0 ? 'text-red-600' : 'text-gray-500' },
   ];
 
   const miniCards = [
-    { label: 'Monthly Sales', value: `Rs. ${data.monthlySales.total.toFixed(0)}`, icon: DollarSign },
-    { label: 'Menu Items', value: data.totalMenuItems, icon: UtensilsCrossed },
-    { label: 'Customers', value: data.totalCustomers, icon: UserCheck },
-    { label: 'Users', value: data.totalUsers, icon: Users },
+    { label: 'Monthly Sales', value: `Rs. ${monthlySalesTotal.toFixed(0)}`, icon: DollarSign },
+    { label: 'Menu Items', value: data.totalMenuItems || 0, icon: UtensilsCrossed },
+    { label: 'Customers', value: data.totalCustomers || 0, icon: UserCheck },
+    { label: 'Users', value: data.totalUsers || 0, icon: Users },
   ];
 
   return (
