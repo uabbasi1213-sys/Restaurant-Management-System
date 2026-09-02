@@ -168,6 +168,431 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
   }
 }
 
+// Special Handler for Orders & Order Items in Online SaaS Mode
+async function handleOrderOps(method, path, body) {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0];
+
+  // GET /kitchen/stats
+  if (cleanPath === '/kitchen/stats') {
+    let query = supabase.from('orders').select('status');
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data } = await query;
+    const stats = { pending: 0, preparing: 0, ready: 0, completed: 0 };
+    (data || []).forEach(o => {
+      if (stats[o.status] !== undefined) stats[o.status]++;
+    });
+    return stats;
+  }
+
+  // GET /orders or GET /kitchen/orders or GET /kitchen
+  if (method === 'GET' && (cleanPath === '/orders' || cleanPath === '/kitchen/orders' || cleanPath === '/kitchen')) {
+    let query = supabase.from('orders').select('*').order('created_at', { ascending: false });
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    if (cleanPath.includes('kitchen')) {
+      query = query.in('status', ['pending', 'preparing', 'ready']);
+    }
+    const { data: orders, error } = await query;
+    if (error) return [];
+    if (!orders || orders.length === 0) return [];
+
+    const orderIds = orders.map(o => o.id);
+    let itemsQuery = supabase.from('order_items').select('*').in('order_id', orderIds);
+    if (tenant_id) itemsQuery = itemsQuery.eq('tenant_id', tenant_id);
+    const { data: orderItems } = await itemsQuery;
+
+    const itemsByOrder = {};
+    (orderItems || []).forEach(item => {
+      if (!itemsByOrder[item.order_id]) itemsByOrder[item.order_id] = [];
+      itemsByOrder[item.order_id].push(item);
+    });
+
+    return orders.map(o => ({
+      ...o,
+      items: itemsByOrder[o.id] || []
+    }));
+  }
+
+  // GET /orders/:id
+  if (method === 'GET' && cleanPath.startsWith('/orders/')) {
+    const id = cleanPath.replace('/orders/', '');
+    let query = supabase.from('orders').select('*').eq('id', id);
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data: order, error } = await query.maybeSingle();
+    if (error || !order) throw new Error('Order not found');
+
+    let itemsQuery = supabase.from('order_items').select('*').eq('order_id', id);
+    if (tenant_id) itemsQuery = itemsQuery.eq('tenant_id', tenant_id);
+    const { data: items } = await itemsQuery;
+
+    return { ...order, items: items || [] };
+  }
+
+  // POST /orders (POS placement)
+  if (method === 'POST' && (cleanPath === '/orders' || cleanPath === '/api/orders')) {
+    const payload = await bodyToPayload(body);
+    const cartItems = Array.isArray(payload.items) ? payload.items : [];
+    delete payload.items;
+
+    if (tenant_id && !payload.tenant_id) payload.tenant_id = tenant_id;
+    if (!payload.order_number) {
+      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const randomNum = Math.floor(100 + Math.random() * 900);
+      payload.order_number = `ORD-${today}-${randomNum}`;
+    }
+
+    if (payload.subtotal !== undefined) payload.subtotal = Number(payload.subtotal) || 0;
+    if (payload.tax !== undefined) payload.tax = Number(payload.tax) || 0;
+    if (payload.discount !== undefined) payload.discount = Number(payload.discount) || 0;
+    if (payload.total !== undefined) payload.total = Number(payload.total) || 0;
+
+    const { data: newOrder, error: orderErr } = await supabase.from('orders').insert([payload]).select().single();
+    if (orderErr) {
+      console.error('Supabase INSERT order error:', orderErr.message);
+      throw new Error(orderErr.message);
+    }
+
+    let insertedItems = [];
+    if (cartItems.length > 0) {
+      const itemPayloads = cartItems.map(item => {
+        const itemCopy = { ...item, order_id: newOrder.id };
+        delete itemCopy.id;
+        if (tenant_id) itemCopy.tenant_id = tenant_id;
+        if (itemCopy.price !== undefined) itemCopy.price = Number(itemCopy.price) || 0;
+        if (itemCopy.quantity !== undefined) itemCopy.quantity = Number(itemCopy.quantity) || 1;
+        if (itemCopy.total !== undefined) itemCopy.total = Number(itemCopy.total) || (itemCopy.price * itemCopy.quantity);
+        return itemCopy;
+      });
+
+      const { data: savedItems, error: itemsErr } = await supabase.from('order_items').insert(itemPayloads).select();
+      if (itemsErr) {
+        console.warn('Supabase INSERT order_items warning:', itemsErr.message);
+      } else {
+        insertedItems = savedItems || [];
+      }
+    }
+
+    return { ...newOrder, items: insertedItems.length > 0 ? insertedItems : cartItems };
+  }
+
+  // PUT/PATCH /orders/:id
+  if ((method === 'PUT' || method === 'PATCH') && cleanPath.startsWith('/orders/')) {
+    const id = cleanPath.replace('/orders/', '');
+    const payload = await bodyToPayload(body);
+    delete payload.id;
+
+    // Extract items before removing from order payload
+    const cartItems = Array.isArray(payload.items) ? [...payload.items] : null;
+    delete payload.items;
+
+    // Recalculate totals if items provided
+    if (cartItems && cartItems.length > 0) {
+      let subtotal = 0;
+      cartItems.forEach(item => { subtotal += (Number(item.price) || 0) * (Number(item.quantity) || 1); });
+      const taxAmt  = Number(payload.tax)      || 0;
+      const discAmt = Number(payload.discount)  || 0;
+      payload.subtotal = subtotal;
+      payload.total    = subtotal + taxAmt - discAmt;
+    }
+
+    if (payload.subtotal !== undefined) payload.subtotal = Number(payload.subtotal) || 0;
+    if (payload.tax      !== undefined) payload.tax      = Number(payload.tax)      || 0;
+    if (payload.discount !== undefined) payload.discount = Number(payload.discount) || 0;
+    if (payload.total    !== undefined) payload.total    = Number(payload.total)    || 0;
+
+    let query = supabase.from('orders').update(payload).eq('id', id);
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data, error } = await query.select();
+    if (error) throw new Error(error.message);
+
+    // Replace order items if provided
+    if (cartItems && cartItems.length > 0) {
+      // Delete old items
+      let delQuery = supabase.from('order_items').delete().eq('order_id', id);
+      if (tenant_id) delQuery = delQuery.eq('tenant_id', tenant_id);
+      await delQuery;
+
+      // Insert new items
+      const itemPayloads = cartItems.map(item => {
+        const qty   = Number(item.quantity) || 1;
+        const price = Number(item.price)    || 0;
+        const itemCopy = {
+          order_id:             id,
+          menu_item_id:         item.menu_item_id || null,
+          item_name:            item.item_name || item.name || 'Item',
+          quantity:             qty,
+          price:                price,
+          total:                price * qty,
+          special_instructions: item.special_instructions || null,
+        };
+        if (tenant_id) itemCopy.tenant_id = tenant_id;
+        return itemCopy;
+      });
+
+      const { error: itemsErr } = await supabase.from('order_items').insert(itemPayloads);
+      if (itemsErr) console.warn('Supabase UPDATE order_items warning:', itemsErr.message);
+    }
+
+    return { message: 'Order updated', data: data ? data[0] : null };
+  }
+
+  return await supabaseTableOp('orders', method, path, body);
+}
+
+// Special Handler for Daily Closing in Online SaaS Mode
+async function handleDailyClosingOps(method, path, body) {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0];
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // GET /daily-closing/today
+  if (cleanPath === '/daily-closing/today') {
+    let closingQuery = supabase.from('daily_closings').select('*').eq('date', todayStr);
+    if (tenant_id) closingQuery = closingQuery.eq('tenant_id', tenant_id);
+    const { data: closedRec } = await closingQuery.maybeSingle();
+
+    let ordersQuery = supabase.from('orders').select('*');
+    if (tenant_id) ordersQuery = ordersQuery.eq('tenant_id', tenant_id);
+    const { data: ordersData } = await ordersQuery;
+
+    let incomeOrders = 0;
+    let totalOrders = 0;
+    let completedOrders = 0;
+    let activeOrders = 0;
+    let cancelledOrders = 0;
+    let cashPay = 0;
+    let cardPay = 0;
+    let onlinePay = 0;
+
+    (ordersData || []).forEach(o => {
+      const orderDate = o.created_at ? o.created_at.slice(0, 10) : '';
+      if (orderDate === todayStr || !o.created_at) {
+        totalOrders++;
+        if (o.status === 'completed' || o.status === 'ready' || o.status === 'preparing') {
+          incomeOrders += Number(o.total) || 0;
+          if (o.payment_type === 'card') cardPay += Number(o.total) || 0;
+          else if (o.payment_type === 'online') onlinePay += Number(o.total) || 0;
+          else cashPay += Number(o.total) || 0;
+        }
+        if (o.status === 'completed') completedOrders++;
+        else if (o.status === 'cancelled') cancelledOrders++;
+        else activeOrders++;
+      }
+    });
+
+    let incomeQuery = supabase.from('income').select('*');
+    if (tenant_id) incomeQuery = incomeQuery.eq('tenant_id', tenant_id);
+    const { data: incomeData } = await incomeQuery;
+
+    let incomeManual = 0;
+    (incomeData || []).forEach(i => {
+      if (i.date === todayStr) incomeManual += Number(i.amount) || 0;
+    });
+
+    let expenseQuery = supabase.from('expenses').select('*');
+    if (tenant_id) expenseQuery = expenseQuery.eq('tenant_id', tenant_id);
+    const { data: expenseData } = await expenseQuery;
+
+    let totalExpense = 0;
+    (expenseData || []).forEach(e => {
+      if (e.date === todayStr) totalExpense += Number(e.amount) || 0;
+    });
+
+    const totalIncome = incomeOrders + incomeManual;
+    const netProfit = totalIncome - totalExpense;
+    const openingBalance = closedRec?.opening_balance || 0;
+    const closingBalance = openingBalance + netProfit;
+
+    return {
+      date: todayStr,
+      is_closed: !!closedRec,
+      opening_balance: openingBalance,
+      income_orders: incomeOrders,
+      income_manual: incomeManual,
+      total_income: totalIncome,
+      total_expense: totalExpense,
+      closing_balance: closingBalance,
+      net_profit: netProfit,
+      orders: {
+        total_orders: totalOrders,
+        completed: completedOrders,
+        active: activeOrders,
+        cancelled: cancelledOrders
+      },
+      payments: {
+        cash: cashPay,
+        card: cardPay,
+        online: onlinePay
+      }
+    };
+  }
+
+  // GET /daily-closing/history
+  if (cleanPath === '/daily-closing/history') {
+    let query = supabase.from('daily_closings').select('*').order('date', { ascending: false });
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data } = await query;
+    return data || [];
+  }
+
+  // POST /daily-closing/close or POST /daily-closing
+  if (method === 'POST' && (cleanPath === '/daily-closing/close' || cleanPath === '/daily-closing')) {
+    const todaySummary = await handleDailyClosingOps('GET', '/daily-closing/today', null);
+    const payload = {
+      date: todayStr,
+      total_sales: todaySummary.total_income,
+      total_orders: todaySummary.orders.total_orders,
+      cash_sales: todaySummary.payments.cash,
+      card_sales: todaySummary.payments.card,
+      total_expenses: todaySummary.total_expense,
+      net_profit: todaySummary.net_profit,
+      opening_balance: todaySummary.opening_balance,
+      closing_balance: todaySummary.closing_balance,
+      tenant_id
+    };
+    const { data, error } = await supabase.from('daily_closings').insert([payload]).select();
+    if (error) throw new Error(error.message);
+    return data ? data[0] : payload;
+  }
+
+  // DELETE /daily-closing/:date (reopen day)
+  if (method === 'DELETE' && cleanPath.startsWith('/daily-closing/')) {
+    const dateParam = cleanPath.replace('/daily-closing/', '');
+    let query = supabase.from('daily_closings').delete().eq('date', dateParam);
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { error } = await query;
+    if (error) throw new Error(error.message);
+    return { message: 'Day reopened' };
+  }
+
+  return await supabaseTableOp('daily_closings', method, path, body);
+}
+
+// Special Handler for Reports in Online SaaS Mode
+async function handleReportOps(method, path) {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0];
+
+  if (cleanPath === '/reports/sales') {
+    let query = supabase.from('orders').select('*');
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data: orders } = await query;
+
+    let totalSales = 0;
+    let totalOrders = 0;
+    let dineInTotal = 0;
+    let takeawayTotal = 0;
+    let deliveryTotal = 0;
+
+    (orders || []).forEach(o => {
+      totalOrders++;
+      const amt = Number(o.total) || 0;
+      totalSales += amt;
+      if (o.order_type === 'takeaway') takeawayTotal += amt;
+      else if (o.order_type === 'delivery') deliveryTotal += amt;
+      else dineInTotal += amt;
+    });
+
+    return {
+      totalSales,
+      totalOrders,
+      avgOrderValue: totalOrders > 0 ? (totalSales / totalOrders) : 0,
+      dineInTotal,
+      takeawayTotal,
+      deliveryTotal,
+      dailyBreakdown: []
+    };
+  }
+
+  if (cleanPath === '/reports/profit-loss') {
+    let incQuery = supabase.from('income').select('*');
+    if (tenant_id) incQuery = incQuery.eq('tenant_id', tenant_id);
+    const { data: incomeData } = await incQuery;
+
+    let expQuery = supabase.from('expenses').select('*');
+    if (tenant_id) expQuery = expQuery.eq('tenant_id', tenant_id);
+    const { data: expenseData } = await expQuery;
+
+    let ordQuery = supabase.from('orders').select('total');
+    if (tenant_id) ordQuery = ordQuery.eq('tenant_id', tenant_id);
+    const { data: ordersData } = await ordQuery;
+
+    let salesIncome = 0;
+    (ordersData || []).forEach(o => { salesIncome += Number(o.total) || 0; });
+
+    let otherIncome = 0;
+    (incomeData || []).forEach(i => { otherIncome += Number(i.amount) || 0; });
+
+    let totalExpenses = 0;
+    (expenseData || []).forEach(e => { totalExpenses += Number(e.amount) || 0; });
+
+    const totalIncome = salesIncome + otherIncome;
+    const netProfit = totalIncome - totalExpenses;
+
+    return {
+      totalIncome,
+      totalExpenses,
+      netProfit,
+      salesIncome,
+      otherIncome,
+      expenseBreakdown: []
+    };
+  }
+
+  if (cleanPath === '/reports/expenses') {
+    let expQuery = supabase.from('expenses').select('*');
+    if (tenant_id) expQuery = expQuery.eq('tenant_id', tenant_id);
+    const { data: expensesList } = await expQuery;
+
+    let totalExpenses = 0;
+    (expensesList || []).forEach(e => { totalExpenses += Number(e.amount) || 0; });
+
+    return {
+      totalExpenses,
+      count: (expensesList || []).length,
+      categoryBreakdown: [],
+      expensesList: expensesList || []
+    };
+  }
+
+  if (cleanPath === '/reports/inventory') {
+    let invQuery = supabase.from('inventory').select('*');
+    if (tenant_id) invQuery = invQuery.eq('tenant_id', tenant_id);
+    const { data: items } = await invQuery;
+
+    let totalValue = 0;
+    let lowStockCount = 0;
+    (items || []).forEach(item => {
+      const qty = Number(item.quantity) || 0;
+      const cost = Number(item.cost_per_unit) || 0;
+      const minQty = Number(item.min_quantity) || 0;
+      totalValue += qty * cost;
+      if (qty <= minQty) lowStockCount++;
+    });
+
+    return {
+      totalItems: (items || []).length,
+      lowStockCount,
+      totalValue,
+      items: items || []
+    };
+  }
+
+  if (cleanPath === '/reports/customers') {
+    let custQuery = supabase.from('customers').select('*');
+    if (tenant_id) custQuery = custQuery.eq('tenant_id', tenant_id);
+    const { data: customers } = await custQuery;
+
+    return {
+      totalCustomers: (customers || []).length,
+      topCustomers: customers || []
+    };
+  }
+
+  return {};
+}
+
 // Supabase Online Mode Router for Web/SaaS Edition
 async function requestSupabase(method, path, body) {
   if (!supabase) return requestHTTP(method, path, body);
@@ -217,7 +642,7 @@ async function requestSupabase(method, path, body) {
 
     // Orders & Kitchen
     if (cleanPath.startsWith('/orders') || cleanPath.startsWith('/kitchen')) {
-      return await supabaseTableOp('orders', method, path, body);
+      return await handleOrderOps(method, path, body);
     }
 
     // Customers
@@ -237,7 +662,12 @@ async function requestSupabase(method, path, body) {
 
     // Daily Closing
     if (cleanPath.startsWith('/daily-closing')) {
-      return await supabaseTableOp('daily_closings', method, path, body);
+      return await handleDailyClosingOps(method, path, body);
+    }
+
+    // Reports
+    if (cleanPath.startsWith('/reports')) {
+      return await handleReportOps(method, path);
     }
 
     // Dashboard Stats

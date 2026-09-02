@@ -117,6 +117,63 @@ router.post('/', authorize('orders', 'pos'), (req, res) => {
   });
 });
 
+// Full order update (items + attributes)
+router.put('/:id', authorize('orders', 'pos'), (req, res) => {
+  const { order_type, table_number, payment_type, discount, tax, special_instructions, status, items } = req.body;
+
+  const order = db.prepare('SELECT * FROM orders WHERE id = ? AND restaurant_id = ?')
+    .get(req.params.id, req.user.restaurant_id || 1);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+
+  let subtotal = order.subtotal;
+  if (items && items.length > 0) {
+    subtotal = 0;
+    items.forEach(item => { subtotal += (item.price || 0) * (item.quantity || 1); });
+  }
+  const taxAmount  = parseFloat(tax  !== undefined ? tax  : order.tax)  || 0;
+  const discAmount = parseFloat(discount !== undefined ? discount : order.discount) || 0;
+  const total = subtotal + taxAmount - discAmount;
+
+  db.prepare(`
+    UPDATE orders SET
+      order_type = ?, table_number = ?, payment_type = ?, discount = ?,
+      tax = ?, subtotal = ?, total = ?, special_instructions = ?,
+      status = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    order_type   || order.order_type,
+    table_number !== undefined ? table_number : order.table_number,
+    payment_type || order.payment_type,
+    discAmount, taxAmount, subtotal, total,
+    special_instructions !== undefined ? special_instructions : order.special_instructions,
+    status || order.status,
+    req.params.id
+  );
+
+  if (items && items.length > 0) {
+    db.prepare('DELETE FROM order_items WHERE order_id = ?').run(req.params.id);
+    items.forEach(item => {
+      db.prepare(`
+        INSERT INTO order_items (order_id, menu_item_id, item_name, quantity, price, total, special_instructions)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        req.params.id,
+        item.menu_item_id || null,
+        item.item_name || item.name || 'Item',
+        item.quantity || 1,
+        item.price || 0,
+        (item.price || 0) * (item.quantity || 1),
+        item.special_instructions || null
+      );
+    });
+  }
+
+  logAudit(req.user.id, req.user.username, 'EDIT', 'Orders',
+    `Order ${order.order_number} updated — Rs.${total.toFixed(2)}`);
+
+  res.json({ message: 'Order updated successfully', total, subtotal });
+});
+
 // Update order status
 router.patch('/:id/status', authorize('orders', 'pos', 'kitchen'), (req, res) => {
   const { status } = req.body;
