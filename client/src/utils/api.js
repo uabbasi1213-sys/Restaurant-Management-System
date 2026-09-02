@@ -29,14 +29,34 @@ async function getTenantId() {
   return null;
 }
 
-function bodyToPayload(body) {
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function bodyToPayload(body) {
   if (!body) return {};
   if (body instanceof FormData) {
     const payload = {};
     for (const [key, value] of body.entries()) {
-      if (!(value instanceof File)) {
+      if (value instanceof File) {
+        if (value.size > 0 && value.type.startsWith('image/')) {
+          try {
+            payload.image = await fileToBase64(value);
+          } catch (e) {
+            console.warn('Failed to convert image file to base64:', e);
+          }
+        }
+      } else {
         payload[key] = value;
       }
+    }
+    if (payload.image_url && !payload.image) {
+      payload.image = payload.image_url;
     }
     return payload;
   }
@@ -94,7 +114,7 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
   }
 
   if (method === 'POST') {
-    const payload = bodyToPayload(body);
+    const payload = await bodyToPayload(body);
     if (tenant_id && !payload.tenant_id && tableName !== 'tenants') {
       payload.tenant_id = tenant_id;
     }
@@ -115,7 +135,7 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
   const id = pathParts[pathParts.length - 1];
 
   if (method === 'PUT' || method === 'PATCH') {
-    const payload = bodyToPayload(body);
+    const payload = await bodyToPayload(body);
     delete payload.id;
     if (payload.cost_price !== undefined) payload.cost_price = Number(payload.cost_price) || 0;
     if (payload.sale_price !== undefined) payload.sale_price = Number(payload.sale_price) || 0;
