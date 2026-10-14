@@ -5,7 +5,7 @@ import { authenticate, authorize } from '../middleware/auth.js';
 const router = Router();
 router.use(authenticate);
 
-router.get('/', authorize('dashboard', 'pos', 'orders'), (req, res) => {
+router.get(['/', '/stats'], authorize('dashboard', 'pos', 'orders'), (req, res) => {
   const restaurantId = req.user.restaurant_id || 1;
   const today = new Date().toISOString().slice(0, 10);
   const monthStart = today.slice(0, 7) + '-01';

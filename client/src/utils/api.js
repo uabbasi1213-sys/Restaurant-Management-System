@@ -593,6 +593,232 @@ async function handleReportOps(method, path) {
   return {};
 }
 
+// Special Handler for Dashboard in Online SaaS Mode
+async function handleDashboardOps() {
+  const tenant_id = await getTenantId();
+
+  try {
+    let ordersQ = supabase.from('orders').select('*').order('created_at', { ascending: false });
+    if (tenant_id) ordersQ = ordersQ.eq('tenant_id', tenant_id);
+
+    let itemsQ = supabase.from('order_items').select('*');
+    if (tenant_id) itemsQ = itemsQ.eq('tenant_id', tenant_id);
+
+    let menuQ = supabase.from('menu_items').select('*', { count: 'exact', head: true });
+    if (tenant_id) menuQ = menuQ.eq('tenant_id', tenant_id);
+
+    let custQ = supabase.from('customers').select('*', { count: 'exact', head: true });
+    if (tenant_id) custQ = custQ.eq('tenant_id', tenant_id);
+
+    let profQ = supabase.from('profiles').select('*', { count: 'exact', head: true });
+    if (tenant_id) profQ = profQ.eq('tenant_id', tenant_id);
+
+    let invQ = supabase.from('inventory').select('*');
+    if (tenant_id) invQ = invQ.eq('tenant_id', tenant_id);
+
+    let incQ = supabase.from('income').select('*');
+    if (tenant_id) incQ = incQ.eq('tenant_id', tenant_id);
+
+    let expQ = supabase.from('expenses').select('*');
+    if (tenant_id) expQ = expQ.eq('tenant_id', tenant_id);
+
+    const [
+      { data: orders },
+      { data: orderItems },
+      { count: totalMenuItems },
+      { count: totalCustomers },
+      { count: totalUsers },
+      { data: inventoryItems },
+      { data: incomeItems },
+      { data: expenseItems }
+    ] = await Promise.all([
+      ordersQ, itemsQ, menuQ, custQ, profQ, invQ, incQ, expQ
+    ]);
+
+    const now = new Date();
+    const todayLocal = now.toLocaleDateString('en-CA');
+    const todayUTC = now.toISOString().slice(0, 10);
+    const currentMonthLocal = todayLocal.slice(0, 7);
+    const currentMonthUTC = todayUTC.slice(0, 7);
+
+    const isToday = (dStr) => {
+      if (!dStr) return false;
+      const d = new Date(dStr);
+      return d.toLocaleDateString('en-CA') === todayLocal || dStr.slice(0, 10) === todayUTC;
+    };
+
+    const isThisMonth = (dStr) => {
+      if (!dStr) return false;
+      const d = new Date(dStr);
+      return d.toLocaleDateString('en-CA').slice(0, 7) === currentMonthLocal || dStr.slice(0, 7) === currentMonthUTC;
+    };
+
+    let todaySalesTotal = 0;
+    let todaySalesCount = 0;
+    let todayOrdersTotal = 0;
+    let todayPending = 0;
+    let todayPreparing = 0;
+
+    let monthlySalesTotal = 0;
+    let monthlySalesCount = 0;
+
+    const paymentMap = {};
+
+    (orders || []).forEach(o => {
+      const isT = isToday(o.created_at);
+      const isM = isThisMonth(o.created_at);
+      const isValidSale = o.status !== 'cancelled';
+      const total = Number(o.total) || 0;
+
+      if (isT) {
+        todayOrdersTotal++;
+        if (o.status === 'pending') todayPending++;
+        if (o.status === 'preparing') todayPreparing++;
+
+        if (isValidSale) {
+          todaySalesTotal += total;
+          todaySalesCount++;
+
+          const pType = (o.payment_type || 'cash').toLowerCase();
+          if (!paymentMap[pType]) paymentMap[pType] = { payment_type: pType, count: 0, total: 0 };
+          paymentMap[pType].count++;
+          paymentMap[pType].total += total;
+        }
+      }
+
+      if (isM && isValidSale) {
+        monthlySalesTotal += total;
+        monthlySalesCount++;
+      }
+    });
+
+    // Today's Income & Expenses
+    let todayIncome = 0;
+    (incomeItems || []).forEach(i => {
+      if (isToday(i.date) || isToday(i.created_at)) {
+        todayIncome += Number(i.amount) || 0;
+      }
+    });
+
+    let todayExpense = 0;
+    (expenseItems || []).forEach(e => {
+      if (isToday(e.date) || isToday(e.created_at)) {
+        todayExpense += Number(e.amount) || 0;
+      }
+    });
+
+    const todayProfit = (todaySalesTotal + todayIncome) - todayExpense;
+
+    // Sales Trend (Last 7 Days)
+    const salesTrend = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dayLocalStr = d.toLocaleDateString('en-CA');
+      const dayUTCStr = d.toISOString().slice(0, 10);
+      let dayTotal = 0;
+      let dayOrders = 0;
+
+      (orders || []).forEach(o => {
+        if (!o.created_at || o.status === 'cancelled') return;
+        const oDateLocal = new Date(o.created_at).toLocaleDateString('en-CA');
+        const oDateUTC = o.created_at.slice(0, 10);
+        if (oDateLocal === dayLocalStr || oDateUTC === dayUTCStr) {
+          dayTotal += Number(o.total) || 0;
+          dayOrders++;
+        }
+      });
+
+      salesTrend.push({ date: dayLocalStr, total: dayTotal, orders: dayOrders });
+    }
+
+    // Payment breakdown
+    const paymentBreakdown = Object.values(paymentMap);
+
+    // Recent Orders (last 8)
+    const recentOrders = (orders || []).slice(0, 8).map(o => ({
+      id: o.id,
+      order_number: o.order_number,
+      order_type: o.order_type,
+      status: o.status,
+      total: Number(o.total) || 0,
+      created_at: o.created_at,
+      table_number: o.table_number
+    }));
+
+    // Top Items (This month)
+    const monthOrderIds = new Set(
+      (orders || []).filter(o => isThisMonth(o.created_at) && o.status !== 'cancelled').map(o => o.id)
+    );
+    const itemMap = {};
+    (orderItems || []).forEach(item => {
+      if (monthOrderIds.has(item.order_id)) {
+        const name = item.item_name || 'Item';
+        if (!itemMap[name]) itemMap[name] = { item_name: name, qty: 0, revenue: 0 };
+        itemMap[name].qty += Number(item.quantity) || 1;
+        itemMap[name].revenue += Number(item.total) || ((Number(item.price) || 0) * (Number(item.quantity) || 1));
+      }
+    });
+    const topItems = Object.values(itemMap).sort((a, b) => b.qty - a.qty).slice(0, 5);
+
+    // Low Stock Items
+    let lowStockCount = 0;
+    const lowStockItems = [];
+    (inventoryItems || []).forEach(item => {
+      const currentStock = Number(item.quantity) || 0;
+      const minStock = Number(item.min_quantity || item.low_stock_threshold) || 0;
+      if (currentStock <= minStock) {
+        lowStockCount++;
+        if (lowStockItems.length < 6) {
+          lowStockItems.push({
+            name: item.name || item.item_name,
+            current_stock: currentStock,
+            min_stock: minStock,
+            unit: item.unit || 'units'
+          });
+        }
+      }
+    });
+
+    return {
+      todaySales: { total: todaySalesTotal, count: todaySalesCount },
+      todayOrders: { total: todayOrdersTotal, pending: todayPending, preparing: todayPreparing },
+      todayProfit,
+      lowStock: lowStockCount,
+      monthlySales: { total: monthlySalesTotal, count: monthlySalesCount },
+      totalMenuItems: totalMenuItems || 0,
+      totalCustomers: totalCustomers || 0,
+      totalUsers: totalUsers || 1,
+      salesTrend,
+      paymentBreakdown,
+      recentOrders,
+      topItems,
+      lowStockItems,
+      todayIncome,
+      todayExpense
+    };
+  } catch (err) {
+    console.error('[Supabase Dashboard Error]:', err);
+    return {
+      todaySales: { total: 0, count: 0 },
+      todayOrders: { total: 0, pending: 0, preparing: 0 },
+      todayProfit: 0,
+      lowStock: 0,
+      monthlySales: { total: 0 },
+      totalMenuItems: 0,
+      totalCustomers: 0,
+      totalUsers: 0,
+      salesTrend: [],
+      paymentBreakdown: [],
+      recentOrders: [],
+      topItems: [],
+      lowStockItems: [],
+      todayIncome: 0,
+      todayExpense: 0
+    };
+  }
+}
+
 // Supabase Online Mode Router for Web/SaaS Edition
 async function requestSupabase(method, path, body) {
   if (!supabase) return requestHTTP(method, path, body);
@@ -671,24 +897,8 @@ async function requestSupabase(method, path, body) {
     }
 
     // Dashboard Stats
-    if (cleanPath === '/dashboard/stats') {
-      return {
-        todaySales: { total: 0, count: 0 },
-        todayOrders: { total: 0, pending: 0, preparing: 0 },
-        todayProfit: 0,
-        lowStock: 0,
-        monthlySales: { total: 0 },
-        totalMenuItems: 0,
-        totalCustomers: 0,
-        totalUsers: 0,
-        salesTrend: [],
-        paymentBreakdown: [],
-        recentOrders: [],
-        topItems: [],
-        lowStockItems: [],
-        todayIncome: 0,
-        todayExpense: 0
-      };
+    if (cleanPath === '/dashboard/stats' || cleanPath === '/dashboard' || cleanPath === '/api/dashboard/stats' || cleanPath === '/api/dashboard') {
+      return await handleDashboardOps();
     }
 
     // Fallbacks

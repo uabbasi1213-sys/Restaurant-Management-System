@@ -4,7 +4,7 @@ import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
   DollarSign, ShoppingCart, Users, AlertTriangle, TrendingUp, TrendingDown,
-  Package, UtensilsCrossed, UserCheck, CreditCard, Clock, ArrowUpRight, ArrowDownRight
+  Package, UtensilsCrossed, UserCheck, CreditCard, Clock, ArrowUpRight, ArrowDownRight, RefreshCw
 } from 'lucide-react';
 
 const STATUS_COLORS = {
@@ -18,6 +18,7 @@ const STATUS_COLORS = {
 export default function Dashboard() {
   const { user, profile } = useAuth();
   const [data, setData] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -25,13 +26,15 @@ export default function Dashboard() {
     }
   }, [profile?.id]);
 
-  const loadDashboard = async () => {
+  const loadDashboard = async (isManual = false) => {
+    if (isManual) setRefreshing(true);
     try {
       const result = await api.get('/dashboard/stats');
       if (!result || typeof result !== 'object' || !result.todaySales) {
         throw new Error('Invalid stats payload received');
       }
       setData(result);
+      if (isManual) toast.success('Dashboard refreshed');
     } catch (err) {
       console.error('Dashboard error:', err.message);
       toast.error('Dashboard load failed: ' + err.message);
@@ -53,6 +56,8 @@ export default function Dashboard() {
         todayIncome: 0,
         todayExpense: 0
       });
+    } finally {
+      if (isManual) setRefreshing(false);
     }
   };
 
@@ -87,9 +92,20 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
-        <p className="text-gray-500">Welcome back, {user?.full_name || user?.username}!</p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
+          <p className="text-gray-500">Welcome back, {profile?.full_name || user?.user_metadata?.full_name || profile?.username || user?.email?.split('@')[0] || 'Admin'}!</p>
+        </div>
+        <button
+          onClick={() => loadDashboard(true)}
+          disabled={refreshing}
+          className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-xl border border-gray-200 shadow-sm transition active:scale-95 disabled:opacity-50"
+          title="Refresh dashboard stats"
+        >
+          <RefreshCw size={16} className={refreshing ? 'animate-spin text-orange-600' : 'text-gray-500'} />
+          <span>Refresh</span>
+        </button>
       </div>
 
       {/* Main Stat Cards */}
