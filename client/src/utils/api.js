@@ -29,6 +29,28 @@ async function getTenantId() {
   return null;
 }
 
+export function getOrderDateString(item) {
+  if (!item) return new Date().toLocaleDateString('en-CA');
+  if (item.order_number) {
+    const match = String(item.order_number).match(/ORD-(\d{4})(\d{2})(\d{2})-/i);
+    if (match) return `${match[1]}-${match[2]}-${match[3]}`;
+  }
+  if (item.date) {
+    const dStr = String(item.date).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dStr)) return dStr;
+  }
+  if (item.created_at) {
+    const d = new Date(item.created_at);
+    if (!isNaN(d.getTime())) return d.toLocaleDateString('en-CA');
+    return String(item.created_at).slice(0, 10);
+  }
+  return new Date().toLocaleDateString('en-CA');
+}
+
+export function getTodayString() {
+  return new Date().toLocaleDateString('en-CA');
+}
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -236,9 +258,12 @@ async function handleOrderOps(method, path, body) {
 
     if (tenant_id && !payload.tenant_id) payload.tenant_id = tenant_id;
     if (!payload.order_number) {
-      const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const today = getTodayString().replace(/-/g, '');
       const randomNum = Math.floor(100 + Math.random() * 900);
       payload.order_number = `ORD-${today}-${randomNum}`;
+    }
+    if (!payload.created_at) {
+      payload.created_at = new Date().toISOString();
     }
 
     if (payload.subtotal !== undefined) payload.subtotal = Number(payload.subtotal) || 0;
@@ -344,7 +369,7 @@ async function handleDailyClosingOps(method, path, body) {
   const tenant_id = await getTenantId();
   const cleanPath = path.split('?')[0];
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = getTodayString();
 
   // GET /daily-closing/today
   if (cleanPath === '/daily-closing/today') {
@@ -366,8 +391,8 @@ async function handleDailyClosingOps(method, path, body) {
     let onlinePay = 0;
 
     (ordersData || []).forEach(o => {
-      const orderDate = o.created_at ? o.created_at.slice(0, 10) : '';
-      if (orderDate === todayStr || !o.created_at) {
+      const orderDate = getOrderDateString(o);
+      if (orderDate === todayStr) {
         totalOrders++;
         if (o.status === 'completed' || o.status === 'ready' || o.status === 'preparing') {
           incomeOrders += Number(o.total) || 0;
@@ -387,7 +412,8 @@ async function handleDailyClosingOps(method, path, body) {
 
     let incomeManual = 0;
     (incomeData || []).forEach(i => {
-      if (i.date === todayStr) incomeManual += Number(i.amount) || 0;
+      const iDate = getOrderDateString(i);
+      if (iDate === todayStr || i.date === todayStr) incomeManual += Number(i.amount) || 0;
     });
 
     let expenseQuery = supabase.from('expenses').select('*');
@@ -396,7 +422,8 @@ async function handleDailyClosingOps(method, path, body) {
 
     let totalExpense = 0;
     (expenseData || []).forEach(e => {
-      if (e.date === todayStr) totalExpense += Number(e.amount) || 0;
+      const eDate = getOrderDateString(e);
+      if (eDate === todayStr || e.date === todayStr) totalExpense += Number(e.amount) || 0;
     });
 
     const totalIncome = incomeOrders + incomeManual;
@@ -636,21 +663,15 @@ async function handleDashboardOps() {
     ]);
 
     const now = new Date();
-    const todayLocal = now.toLocaleDateString('en-CA');
-    const todayUTC = now.toISOString().slice(0, 10);
-    const currentMonthLocal = todayLocal.slice(0, 7);
-    const currentMonthUTC = todayUTC.slice(0, 7);
+    const todayStr = getTodayString();
+    const currentMonth = todayStr.slice(0, 7);
 
-    const isToday = (dStr) => {
-      if (!dStr) return false;
-      const d = new Date(dStr);
-      return d.toLocaleDateString('en-CA') === todayLocal || dStr.slice(0, 10) === todayUTC;
+    const isToday = (o) => {
+      return getOrderDateString(o) === todayStr;
     };
 
-    const isThisMonth = (dStr) => {
-      if (!dStr) return false;
-      const d = new Date(dStr);
-      return d.toLocaleDateString('en-CA').slice(0, 7) === currentMonthLocal || dStr.slice(0, 7) === currentMonthUTC;
+    const isThisMonth = (o) => {
+      return getOrderDateString(o).startsWith(currentMonth);
     };
 
     let todaySalesTotal = 0;
@@ -665,8 +686,8 @@ async function handleDashboardOps() {
     const paymentMap = {};
 
     (orders || []).forEach(o => {
-      const isT = isToday(o.created_at);
-      const isM = isThisMonth(o.created_at);
+      const isT = isToday(o);
+      const isM = isThisMonth(o);
       const isValidSale = o.status !== 'cancelled';
       const total = Number(o.total) || 0;
 
@@ -695,14 +716,16 @@ async function handleDashboardOps() {
     // Today's Income & Expenses
     let todayIncome = 0;
     (incomeItems || []).forEach(i => {
-      if (isToday(i.date) || isToday(i.created_at)) {
+      const iDate = getOrderDateString(i);
+      if (iDate === todayStr || i.date === todayStr) {
         todayIncome += Number(i.amount) || 0;
       }
     });
 
     let todayExpense = 0;
     (expenseItems || []).forEach(e => {
-      if (isToday(e.date) || isToday(e.created_at)) {
+      const eDate = getOrderDateString(e);
+      if (eDate === todayStr || e.date === todayStr) {
         todayExpense += Number(e.amount) || 0;
       }
     });
@@ -715,15 +738,13 @@ async function handleDashboardOps() {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
       const dayLocalStr = d.toLocaleDateString('en-CA');
-      const dayUTCStr = d.toISOString().slice(0, 10);
       let dayTotal = 0;
       let dayOrders = 0;
 
       (orders || []).forEach(o => {
-        if (!o.created_at || o.status === 'cancelled') return;
-        const oDateLocal = new Date(o.created_at).toLocaleDateString('en-CA');
-        const oDateUTC = o.created_at.slice(0, 10);
-        if (oDateLocal === dayLocalStr || oDateUTC === dayUTCStr) {
+        if (o.status === 'cancelled') return;
+        const oDate = getOrderDateString(o);
+        if (oDate === dayLocalStr) {
           dayTotal += Number(o.total) || 0;
           dayOrders++;
         }
@@ -748,7 +769,7 @@ async function handleDashboardOps() {
 
     // Top Items (This month)
     const monthOrderIds = new Set(
-      (orders || []).filter(o => isThisMonth(o.created_at) && o.status !== 'cancelled').map(o => o.id)
+      (orders || []).filter(o => isThisMonth(o) && o.status !== 'cancelled').map(o => o.id)
     );
     const itemMap = {};
     (orderItems || []).forEach(item => {
