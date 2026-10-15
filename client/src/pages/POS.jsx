@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer } from 'lucide-react';
+import { Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer, Eye } from 'lucide-react';
 import InvoiceModal from '../components/InvoiceModal';
+import { printInvoice } from '../utils/printInvoice';
 
 export default function POS() {
-  const { profile } = useAuth();
+  const { profile, tenant } = useAuth();
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -20,6 +21,7 @@ export default function POS() {
   const [orderSuccess, setOrderSuccess] = useState(null);
   const [search, setSearch] = useState('');
   const [printOrderId, setPrintOrderId] = useState(null);
+  const [autoPrint, setAutoPrint] = useState(() => localStorage.getItem('pos_auto_print') === 'true');
 
   useEffect(() => {
     if (profile) {
@@ -118,6 +120,10 @@ export default function POS() {
       setTableNumber('');
       setSpecialInstructions('');
       toast.success(`Order ${orderData.order_number} placed!`);
+
+      if (autoPrint) {
+        setTimeout(() => printInvoice(orderData, tenant), 150);
+      }
     } catch (err) { toast.error(err.message); }
   };
 
@@ -261,6 +267,24 @@ export default function POS() {
             ))}
           </div>
 
+          {/* Auto Print Toggle */}
+          <div className="flex items-center justify-between text-xs text-gray-600 px-1 pt-1">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoPrint}
+                onChange={e => {
+                  setAutoPrint(e.target.checked);
+                  localStorage.setItem('pos_auto_print', e.target.checked ? 'true' : 'false');
+                }}
+                className="w-4 h-4 text-orange-600 rounded accent-orange-600"
+              />
+              <span className="font-medium text-gray-700 flex items-center gap-1.5">
+                <Printer size={13} className="text-gray-500" /> Auto-print invoice on place order
+              </span>
+            </label>
+          </div>
+
           <button
             onClick={() => { placeOrder(); if (isMobile) setMobileCartOpen(false); }}
             className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl font-bold text-lg transition flex items-center justify-center gap-2 active:scale-95"
@@ -396,16 +420,24 @@ export default function POS() {
             <p className="text-3xl font-bold text-orange-600 mb-1">{orderSuccess.order_number}</p>
             <p className="text-gray-500 mb-4">Total: Rs. {orderSuccess.total?.toFixed(2)}</p>
             <button
-              onClick={() => { setPrintOrderId(orderSuccess.id); setOrderSuccess(null); }}
-              className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 mb-2"
+              onClick={() => {
+                printInvoice(orderSuccess, tenant);
+              }}
+              className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-semibold transition flex items-center justify-center gap-2 mb-2 active:scale-95 shadow-sm shadow-green-600/30"
             >
               <Printer size={18} /> Print Invoice
             </button>
             <button
               onClick={() => setOrderSuccess(null)}
-              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl font-semibold transition"
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl font-semibold transition mb-3 active:scale-95"
             >
               New Order
+            </button>
+            <button
+              onClick={() => setPrintOrderId(orderSuccess.id)}
+              className="text-xs text-gray-400 hover:text-gray-600 flex items-center justify-center gap-1 mx-auto"
+            >
+              <Eye size={13} /> Preview receipt modal
             </button>
           </div>
         </div>
