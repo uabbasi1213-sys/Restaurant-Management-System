@@ -77,7 +77,7 @@ export default function Login() {
               display: 'block', color: 'rgba(255,255,255,0.7)',
               fontSize: '13px', fontWeight: '500', marginBottom: '8px'
             }}>
-              {isElectron ? 'Username' : 'Email Address'}
+              Username or Email Address
             </label>
             <div style={{ position: 'relative' }}>
               <User size={18} style={{
@@ -85,12 +85,12 @@ export default function Login() {
                 transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)'
               }} />
               <input
-                type={isElectron ? 'text' : 'email'}
+                type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 required
                 autoFocus
-                placeholder={isElectron ? 'admin' : 'you@restaurant.com'}
+                placeholder="admin or you@restaurant.com"
                 style={{
                   width: '100%', padding: '14px 14px 14px 44px',
                   background: 'rgba(255,255,255,0.07)',
@@ -169,24 +169,22 @@ export default function Login() {
             </p>
           ) : (
             <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: 0 }}>
-              🔒 Offline Desktop • Local SQLite Database
+              ☁️ Cloud SaaS Edition • Online Real-time Database
             </p>
           )}
         </div>
 
-        {/* Default credentials hint for desktop */}
-        {isElectron && (
-          <div style={{
-            marginTop: '12px', padding: '12px 16px',
-            background: 'rgba(249,115,22,0.08)',
-            border: '1px solid rgba(249,115,22,0.2)',
-            borderRadius: '10px', textAlign: 'center'
-          }}>
-            <p style={{ color: 'rgba(255,200,100,0.7)', fontSize: '11px', margin: 0 }}>
-              Default: <strong style={{ color: 'rgba(249,180,80,0.9)' }}>admin</strong> / <strong style={{ color: 'rgba(249,180,80,0.9)' }}>admin123</strong>
-            </p>
-          </div>
-        )}
+        {/* Credentials hint */}
+        <div style={{
+          marginTop: '12px', padding: '12px 16px',
+          background: 'rgba(249,115,22,0.08)',
+          border: '1px solid rgba(249,115,22,0.2)',
+          borderRadius: '10px', textAlign: 'center'
+        }}>
+          <p style={{ color: 'rgba(255,200,100,0.85)', fontSize: '12px', margin: 0 }}>
+            Admin Login: <strong style={{ color: 'rgba(249,180,80,1)' }}>admin</strong> or your registered email
+          </p>
+        </div>
       </div>
     </div>
   );

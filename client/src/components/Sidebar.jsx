@@ -107,10 +107,10 @@ export default function Sidebar({ isOpen, onClose }) {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold text-white truncate">
-                {profile?.full_name || profile?.email || 'User'}
+                {profile?.full_name || profile?.email || 'Admin'}
               </p>
               <p className="text-xs text-slate-400 capitalize">
-                {profile?.role || 'staff'}
+                {profile?.role || 'Admin'}
               </p>
             </div>
           </div>

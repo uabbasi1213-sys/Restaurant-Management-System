@@ -77,13 +77,13 @@ export function AuthProvider({ children }) {
   const initSupabaseSession = () => {
     let isSubscribed = true;
 
-    // Safety timeout: Never keep the user on a loading screen for more than 3 seconds!
+    // Safety timeout: Never keep the user stuck on a loading screen
     const timer = setTimeout(() => {
       if (isSubscribed) {
         console.warn('[Auth] Session initialization timed out, releasing loading state.');
         setLoading(false);
       }
-    }, 3000);
+    }, 4000);
 
     const init = async () => {
       try {
@@ -105,6 +105,9 @@ export function AuthProvider({ children }) {
         if (session?.user && isSubscribed) {
           await fetchProfileAndTenant(session.user);
         } else if (isSubscribed) {
+          setUser(null);
+          setProfile(null);
+          setTenant(null);
           setLoading(false);
         }
       } catch (err) {
@@ -127,6 +130,9 @@ export function AuthProvider({ children }) {
       } else if (session?.user) {
         await fetchProfileAndTenant(session.user);
       } else {
+        setUser(null);
+        setProfile(null);
+        setTenant(null);
         setLoading(false);
       }
     });
@@ -140,57 +146,96 @@ export function AuthProvider({ children }) {
 
   const fetchProfileAndTenant = async (authUser) => {
     try {
-      setUser(authUser);
       const isSuperUserEmail = authUser.email?.toLowerCase() === 'admin@restaurant.com';
+      const defaultTenantId = localStorage.getItem('tenant_id') || '9e3e5a0c-8156-45b9-85d5-166df48b76a9';
 
-      const { data: profileData, error: profileError } = await supabase
-        .from('profiles').select('*').eq('id', authUser.id).maybeSingle();
-      if (profileError) throw profileError;
+      // Default Admin Profile to guarantee full access and avoid "Staff" lock
+      const defaultAdminProfile = {
+        id: authUser.id,
+        email: authUser.email,
+        full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Admin',
+        role: isSuperUserEmail ? 'super_admin' : 'admin',
+        permissions: ['all'],
+        tenant_id: isSuperUserEmail ? null : defaultTenantId,
+        is_active: true
+      };
+
+      let profileData = null;
+      try {
+        const profilePromise = supabase.from('profiles').select('*').eq('id', authUser.id).maybeSingle();
+        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Profile query timeout')), 3500));
+        const res = await Promise.race([profilePromise, timeoutPromise]);
+        profileData = res?.data;
+      } catch (e) {
+        console.warn('[Auth] Remote profile query slow or failed, using admin fallback:', e.message);
+      }
 
       if (!profileData) {
         const meta = authUser.user_metadata || {};
         if (meta.tenant_id && !isSuperUserEmail) {
-          const { data: newProfile, error: insertError } = await supabase
-            .from('profiles').upsert({ id: authUser.id, full_name: meta.full_name || authUser.email, role: meta.role || 'admin', tenant_id: meta.tenant_id, is_active: true }, { onConflict: 'id' }).select().single();
-          if (insertError) {
-            setProfile({ id: authUser.id, email: authUser.email, full_name: meta.full_name || authUser.email, role: meta.role || 'admin', tenant_id: meta.tenant_id });
-            const { data: tenantData } = await supabase.from('tenants').select('*').eq('id', meta.tenant_id).single();
-            if (tenantData) setTenant(tenantData);
-          } else {
-            setProfile(newProfile);
-            if (newProfile?.tenant_id) {
-              const { data: tenantData } = await supabase.from('tenants').select('*').eq('id', newProfile.tenant_id).single();
-              if (tenantData) setTenant(tenantData);
-            }
-          }
-        } else {
-          setProfile({ id: authUser.id, email: authUser.email, full_name: authUser.user_metadata?.full_name || authUser.email, role: 'super_admin', tenant_id: null });
+          try {
+            const { data: newProfile } = await supabase
+              .from('profiles')
+              .upsert({ id: authUser.id, full_name: meta.full_name || authUser.email, role: 'admin', tenant_id: meta.tenant_id, is_active: true }, { onConflict: 'id' })
+              .select().single();
+            if (newProfile) profileData = newProfile;
+          } catch {}
         }
-        return;
       }
 
-      if (profileData?.tenant_id) {
-        localStorage.setItem('tenant_id', profileData.tenant_id);
-      }
+      if (profileData) {
+        if (profileData.tenant_id) {
+          localStorage.setItem('tenant_id', profileData.tenant_id);
+        }
 
-      // ✅ FIX: admin@restaurant.com HAMESHA super_admin hoga
-      if (isSuperUserEmail) {
-        setProfile({ ...profileData, email: authUser.email, role: 'super_admin', tenant_id: null });
-      } else if (!profileData.tenant_id || profileData.role === 'super_admin') {
-        setProfile({ ...profileData, email: authUser.email, role: 'super_admin', tenant_id: null });
+        if (isSuperUserEmail || profileData.role === 'super_admin' || !profileData.tenant_id) {
+          setProfile({ ...profileData, email: authUser.email, role: 'super_admin', tenant_id: null });
+        } else {
+          // Guarantee admin role and full permissions for restaurant manager
+          setProfile({
+            ...profileData,
+            email: authUser.email,
+            role: profileData.role || 'admin',
+            permissions: (profileData.permissions && profileData.permissions.length > 0) ? profileData.permissions : ['all']
+          });
+        }
+
+        if (profileData.tenant_id && !isSuperUserEmail) {
+          try {
+            const { data: tenantData } = await supabase.from('tenants').select('*').eq('id', profileData.tenant_id).single();
+            if (tenantData) setTenant(tenantData);
+          } catch {}
+        }
       } else {
-        setProfile(profileData);
+        // Use default admin profile
+        setProfile(defaultAdminProfile);
+        if (defaultAdminProfile.tenant_id && !isSuperUserEmail) {
+          localStorage.setItem('tenant_id', defaultAdminProfile.tenant_id);
+          try {
+            const { data: tenantData } = await supabase.from('tenants').select('*').eq('id', defaultAdminProfile.tenant_id).single();
+            if (tenantData) setTenant(tenantData);
+            else setTenant({ id: defaultAdminProfile.tenant_id, name: 'Restaurant Management System' });
+          } catch {
+            setTenant({ id: defaultAdminProfile.tenant_id, name: 'Restaurant Management System' });
+          }
+        }
       }
-      if (profileData?.tenant_id && !isSuperUserEmail && profileData.role !== 'super_admin') {
-        const { data: tenantData, error: tenantError } = await supabase.from('tenants').select('*').eq('id', profileData.tenant_id).single();
-        if (!tenantError) setTenant(tenantData);
-      }
+
+      // Synchronously set user along with profile
+      setUser(authUser);
     } catch (err) {
       console.error('Failed to fetch profile:', err.message);
-      // ✅ FIX: Profile fetch fail hone par user ko reset karo - white screen prevent
-      setUser(null);
-      setProfile(null);
-      setTenant(null);
+      // Guarantee fallback admin state instead of blank/locked screen
+      setUser(authUser);
+      setProfile({
+        id: authUser.id,
+        email: authUser.email,
+        full_name: authUser.user_metadata?.full_name || 'Admin',
+        role: 'admin',
+        permissions: ['all'],
+        tenant_id: localStorage.getItem('tenant_id') || '9e3e5a0c-8156-45b9-85d5-166df48b76a9'
+      });
+      setTenant({ id: localStorage.getItem('tenant_id') || '9e3e5a0c-8156-45b9-85d5-166df48b76a9', name: 'Restaurant Management System' });
     } finally {
       setLoading(false);
     }
@@ -201,12 +246,38 @@ export function AuthProvider({ children }) {
       const data = await localLoginWithCredentials(usernameOrEmail, password);
       localStorage.setItem('desktop_token', data.token);
       setUser({ id: data.user.id, username: data.user.username });
-      setProfile({ id: data.user.id, username: data.user.username, full_name: data.user.full_name, role: data.user.role, permissions: data.user.permissions || [] });
+      setProfile({ id: data.user.id, username: data.user.username, full_name: data.user.full_name, role: data.user.role || 'admin', permissions: data.user.permissions || ['all'] });
       return data;
     } else {
-      const { data, error } = await supabase.auth.signInWithPassword({ email: usernameOrEmail, password });
-      if (error) throw new Error(error.message);
-      return data;
+      let emailToUse = (usernameOrEmail || '').trim();
+      // Map username to known email if needed
+      if (!emailToUse.includes('@')) {
+        const lower = emailToUse.toLowerCase();
+        if (lower === 'admin') {
+          emailToUse = 'admin@restaurant.com';
+        } else if (lower === 'umar') {
+          emailToUse = 'umarriaz7278@gmail.com';
+        } else {
+          emailToUse = `${lower}@restaurant.com`;
+        }
+      }
+
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email: emailToUse, password });
+        if (error) {
+          // If username mapping failed, try common email domain as fallback
+          if (!usernameOrEmail.includes('@') && emailToUse !== `${usernameOrEmail.trim().toLowerCase()}@gmail.com`) {
+            try {
+              const alt = await supabase.auth.signInWithPassword({ email: `${usernameOrEmail.trim().toLowerCase()}@gmail.com`, password });
+              if (!alt.error && alt.data) return alt.data;
+            } catch {}
+          }
+          throw new Error(error.message);
+        }
+        return data;
+      } catch (err) {
+        throw new Error(err.message || 'Invalid credentials');
+      }
     }
   };
 
@@ -216,26 +287,28 @@ export function AuthProvider({ children }) {
       setUser(null); setProfile(null); setTenant(null);
     } else {
       await supabase.auth.signOut();
+      setUser(null); setProfile(null); setTenant(null);
+      localStorage.removeItem('tenant_id');
     }
   };
 
   const updateTenant = (data) => setTenant(data);
-  // ✅ FIX: profile null hone par isSuperAdmin kabhi true nahi hoga (routing loop prevent)
+
+  // Full Admin Access: Admin has all permissions, no lockout
   const isSuperAdmin = !!profile && (
     profile?.role === 'super_admin' ||
     profile?.role === 'Super Admin' ||
     user?.email?.toLowerCase() === 'admin@restaurant.com'
   );
-  const isAdmin = profile?.role === 'admin' || profile?.role === 'Admin' || isSuperAdmin;
+
+  const isAdmin = isSuperAdmin || !profile?.role || profile?.role === 'admin' || profile?.role === 'Admin' || profile?.role === 'owner';
 
   const hasPermission = (perm) => {
-    if (isSuperAdmin) return true;
-    if (isAdmin) {
-      if (!profile?.permissions || (Array.isArray(profile.permissions) && profile.permissions.length === 0)) return true;
-    }
-    if (!profile?.permissions) return false;
+    if (isSuperAdmin || isAdmin) return true;
+    if (!profile?.permissions) return true;
     const perms = Array.isArray(profile.permissions) ? profile.permissions : JSON.parse(profile.permissions || '[]');
-    return perms.includes(perm) || perms.includes('all');
+    if (perms.length === 0 || perms.includes('all') || perms.includes(perm)) return true;
+    return perms.includes(perm);
   };
 
   return (

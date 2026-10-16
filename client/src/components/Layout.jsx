@@ -46,10 +46,10 @@ export default function Layout() {
               </div>
               <div className="hidden md:block text-left">
                 <p className="text-sm font-semibold text-gray-800 leading-tight">
-                  {profile?.full_name || profile?.email || 'User'}
+                  {profile?.full_name || profile?.email || 'Admin'}
                 </p>
                 <p className="text-xs text-gray-500 capitalize">
-                  {profile?.role || 'staff'}
+                  {profile?.role || 'Admin'}
                 </p>
               </div>
             </button>
@@ -66,9 +66,9 @@ export default function Layout() {
                   {/* User Info */}
                   <div className="px-4 py-3 border-b bg-gray-50">
                     <p className="text-sm font-bold text-gray-800 truncate">
-                      {profile?.full_name || profile?.email}
+                      {profile?.full_name || profile?.email || 'Admin'}
                     </p>
-                    <p className="text-xs text-gray-500 capitalize">{profile?.role || 'staff'}</p>
+                    <p className="text-xs text-gray-500 capitalize">{profile?.role || 'Admin'}</p>
                     {tenant?.name && (
                       <p className="text-xs text-orange-600 font-medium mt-0.5">{tenant.name}</p>
                     )}
