@@ -1,4 +1,5 @@
-﻿import { Routes, Route, Navigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 
 const isElectron = import.meta.env.VITE_MODE === 'electron';
 import { useAuth } from './context/AuthContext';
@@ -62,14 +63,27 @@ function PrivateRoute({ children, requireSuperAdmin = false }) {
 
 export default function App() {
   const { user, isSuperAdmin, loading } = useAuth();
+  const [showTroubleshoot, setShowTroubleshoot] = useState(false);
+
+  useEffect(() => {
+    let timer;
+    if (loading) {
+      timer = setTimeout(() => {
+        setShowTroubleshoot(true);
+      }, 2500);
+    } else {
+      setShowTroubleshoot(false);
+    }
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   if (loading) {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100vh', background: '#0a0a14'
+        height: '100vh', background: '#0a0a14', padding: '16px'
       }}>
-        <div style={{ textAlign: 'center' }}>
+        <div style={{ textAlign: 'center', maxWidth: '320px' }}>
           <div style={{
             width: '48px', height: '48px', margin: '0 auto 16px',
             border: '3px solid rgba(249,115,22,0.2)',
@@ -78,9 +92,40 @@ export default function App() {
             animation: 'spin 0.8s linear infinite'
           }} />
           <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '14px', margin: 0 }}>
+          <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '15px', fontWeight: 500, margin: 0 }}>
             Restaurant Manager
           </p>
+          {showTroubleshoot && (
+            <div style={{ marginTop: '20px' }}>
+              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', marginBottom: '12px' }}>
+                Taking longer than usual to connect?
+              </p>
+              <button
+                onClick={() => {
+                  try {
+                    localStorage.clear();
+                    sessionStorage.clear();
+                  } catch (e) {}
+                  window.location.href = '/login';
+                }}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#f97316',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  transition: 'opacity 0.2s'
+                }}
+                onMouseOver={(e) => (e.currentTarget.style.opacity = '0.85')}
+                onMouseOut={(e) => (e.currentTarget.style.opacity = '1')}
+              >
+                Reset Session & Login
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );

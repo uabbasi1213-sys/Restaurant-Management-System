@@ -45,7 +45,8 @@ export function AuthProvider({ children }) {
     if (isElectron) {
       initElectronSession();
     } else {
-      initSupabaseSession();
+      const cleanup = initSupabaseSession();
+      return cleanup;
     }
   }, []);
 
@@ -73,21 +74,68 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const initSupabaseSession = async () => {
-    try {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user) fetchProfileAndTenant(session.user);
-        else setLoading(false);
-      });
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-        if (session?.user) await fetchProfileAndTenant(session.user);
-        else { setUser(null); setProfile(null); setTenant(null); setLoading(false); }
-      });
-      return () => subscription.unsubscribe();
-    } catch (err) {
-      console.error('Supabase init failed:', err);
-      setLoading(false);
-    }
+  const initSupabaseSession = () => {
+    let isSubscribed = true;
+
+    // Safety timeout: Never keep the user on a loading screen for more than 3 seconds!
+    const timer = setTimeout(() => {
+      if (isSubscribed) {
+        console.warn('[Auth] Session initialization timed out, releasing loading state.');
+        setLoading(false);
+      }
+    }, 3000);
+
+    const init = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.warn('[Auth] getSession error:', error.message);
+          if (error.message?.includes('Refresh Token') || error.message?.includes('invalid')) {
+            try { await supabase.auth.signOut(); } catch {}
+          }
+          if (isSubscribed) {
+            setUser(null);
+            setProfile(null);
+            setTenant(null);
+            setLoading(false);
+          }
+          return;
+        }
+
+        if (session?.user && isSubscribed) {
+          await fetchProfileAndTenant(session.user);
+        } else if (isSubscribed) {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('[Auth] getSession failed:', err);
+        if (isSubscribed) setLoading(false);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    init();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!isSubscribed) return;
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setProfile(null);
+        setTenant(null);
+        setLoading(false);
+      } else if (session?.user) {
+        await fetchProfileAndTenant(session.user);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      isSubscribed = false;
+      clearTimeout(timer);
+      subscription?.unsubscribe();
+    };
   };
 
   const fetchProfileAndTenant = async (authUser) => {
