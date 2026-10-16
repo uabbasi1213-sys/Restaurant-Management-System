@@ -120,7 +120,7 @@ export function AuthProvider({ children }) {
 
     init();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!isSubscribed) return;
       if (event === 'SIGNED_OUT') {
         setUser(null);
@@ -128,7 +128,10 @@ export function AuthProvider({ children }) {
         setTenant(null);
         setLoading(false);
       } else if (session?.user) {
-        await fetchProfileAndTenant(session.user);
+        // Run decoupled from auth dispatcher to prevent Supabase query deadlocks
+        setTimeout(() => {
+          if (isSubscribed) fetchProfileAndTenant(session.user);
+        }, 0);
       } else {
         setUser(null);
         setProfile(null);
@@ -263,16 +266,27 @@ export function AuthProvider({ children }) {
       }
 
       try {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: emailToUse, password });
+        const authPromise = supabase.auth.signInWithPassword({ email: emailToUse, password });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Sign-in request timed out. Please check your network and try again.')), 8000)
+        );
+
+        const { data, error } = await Promise.race([authPromise, timeoutPromise]);
         if (error) {
           // If username mapping failed, try common email domain as fallback
           if (!usernameOrEmail.includes('@') && emailToUse !== `${usernameOrEmail.trim().toLowerCase()}@gmail.com`) {
             try {
               const alt = await supabase.auth.signInWithPassword({ email: `${usernameOrEmail.trim().toLowerCase()}@gmail.com`, password });
-              if (!alt.error && alt.data) return alt.data;
+              if (!alt.error && alt.data) {
+                if (alt.data.user) await fetchProfileAndTenant(alt.data.user);
+                return alt.data;
+              }
             } catch {}
           }
           throw new Error(error.message);
+        }
+        if (data?.user) {
+          await fetchProfileAndTenant(data.user);
         }
         return data;
       } catch (err) {

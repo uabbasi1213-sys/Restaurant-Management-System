@@ -17,9 +17,9 @@ export default function Login() {
     try {
       await login(username, password);
       toast.success('Login successful!');
+      window.location.href = '/';
     } catch (err) {
       toast.error(err.message || 'Invalid credentials');
-    } finally {
       setLoading(false);
     }
   };
@@ -184,6 +184,30 @@ export default function Login() {
           <p style={{ color: 'rgba(255,200,100,0.85)', fontSize: '12px', margin: 0 }}>
             Admin Login: <strong style={{ color: 'rgba(249,180,80,1)' }}>admin</strong> or your registered email
           </p>
+        </div>
+
+        <div style={{ textAlign: 'center', marginTop: '14px' }}>
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                localStorage.clear();
+                sessionStorage.clear();
+              } catch (e) {}
+              toast.success('Session reset! Reloading...');
+              setTimeout(() => window.location.reload(), 400);
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'rgba(255,255,255,0.35)',
+              fontSize: '11px',
+              cursor: 'pointer',
+              textDecoration: 'underline'
+            }}
+          >
+            Clear Browser Cache & Reset Session
+          </button>
         </div>
       </div>
     </div>
