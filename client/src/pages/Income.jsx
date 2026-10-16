@@ -82,7 +82,6 @@ export default function Income() {
     if (!form.type || !form.amount) return toast.error('Type and amount required');
     try {
       const payload = { ...form, amount: parseFloat(form.amount) };
-      if (!editing) payload.created_by = profile.id;
 
       if (editing) {
         await api.put('/income/' + editing.id, payload);

@@ -84,7 +84,10 @@ export default function Expenses() {
     if (!form.description.trim() || !form.amount) return toast.error('Description and amount required');
     try {
       const payload = { ...form, amount: parseFloat(form.amount) };
-      if (!editing) payload.created_by = profile.id;
+      const isValidUUID = (id) => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id.trim());
+      if (!editing && profile?.id && isValidUUID(profile.id)) {
+        payload.created_by = profile.id;
+      }
 
       if (editing) {
         await api.put('/expenses/' + editing.id, payload);

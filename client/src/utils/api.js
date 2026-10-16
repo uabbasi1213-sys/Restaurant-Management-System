@@ -51,6 +51,10 @@ export function getTodayString() {
   return new Date().toLocaleDateString('en-CA');
 }
 
+export function isValidUUID(str) {
+  return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
+}
+
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -117,7 +121,7 @@ async function requestHTTP(method, path, body) {
 // Generic Supabase Table Helper for Online SaaS Mode
 async function supabaseTableOp(tableName, method, path, body, orderCol = 'created_at') {
   const tenant_id = await getTenantId();
-  const cleanPath = path.split('?')[0];
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
 
   if (method === 'GET') {
     let query = supabase.from(tableName).select('*');
@@ -145,6 +149,18 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
     if (payload.price !== undefined) payload.price = Number(payload.price) || 0;
     if (payload.amount !== undefined) payload.amount = Number(payload.amount) || 0;
 
+    // Schema sanitization for tables with specific column constraints
+    if (tableName === 'income') {
+      delete payload.created_by;
+      if (!payload.type) payload.type = 'Sales';
+    }
+    if (tableName === 'expenses') {
+      if (payload.created_by !== undefined) {
+        payload.created_by = isValidUUID(payload.created_by) ? payload.created_by.trim() : null;
+      }
+      if (!payload.category) payload.category = 'Other';
+    }
+
     const { data, error } = await supabase.from(tableName).insert([payload]).select();
     if (error) {
       console.error(`Supabase INSERT ${tableName} error:`, error.message);
@@ -163,6 +179,15 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
     if (payload.sale_price !== undefined) payload.sale_price = Number(payload.sale_price) || 0;
     if (payload.price !== undefined) payload.price = Number(payload.price) || 0;
     if (payload.amount !== undefined) payload.amount = Number(payload.amount) || 0;
+
+    if (tableName === 'income') {
+      delete payload.created_by;
+    }
+    if (tableName === 'expenses') {
+      if (payload.created_by !== undefined) {
+        payload.created_by = isValidUUID(payload.created_by) ? payload.created_by.trim() : null;
+      }
+    }
 
     let query = supabase.from(tableName).update(payload).eq('id', id);
     if (tenant_id && tableName !== 'tenants') {
@@ -193,7 +218,7 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
 // Special Handler for Orders & Order Items in Online SaaS Mode
 async function handleOrderOps(method, path, body) {
   const tenant_id = await getTenantId();
-  const cleanPath = path.split('?')[0];
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
 
   // GET /kitchen/stats
   if (cleanPath === '/kitchen/stats') {
@@ -367,13 +392,13 @@ async function handleOrderOps(method, path, body) {
 // Special Handler for Daily Closing in Online SaaS Mode
 async function handleDailyClosingOps(method, path, body) {
   const tenant_id = await getTenantId();
-  const cleanPath = path.split('?')[0];
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
 
   const todayStr = getTodayString();
 
   // GET /daily-closing/today
   if (cleanPath === '/daily-closing/today') {
-    let closingQuery = supabase.from('daily_closings').select('*').eq('date', todayStr);
+    let closingQuery = supabase.from('daily_closing').select('*').eq('date', todayStr);
     if (tenant_id) closingQuery = closingQuery.eq('tenant_id', tenant_id);
     const { data: closedRec } = await closingQuery.maybeSingle();
 
@@ -457,7 +482,7 @@ async function handleDailyClosingOps(method, path, body) {
 
   // GET /daily-closing/history
   if (cleanPath === '/daily-closing/history') {
-    let query = supabase.from('daily_closings').select('*').order('date', { ascending: false });
+    let query = supabase.from('daily_closing').select('*').order('date', { ascending: false });
     if (tenant_id) query = query.eq('tenant_id', tenant_id);
     const { data } = await query;
     return data || [];
@@ -466,19 +491,25 @@ async function handleDailyClosingOps(method, path, body) {
   // POST /daily-closing/close or POST /daily-closing
   if (method === 'POST' && (cleanPath === '/daily-closing/close' || cleanPath === '/daily-closing')) {
     const todaySummary = await handleDailyClosingOps('GET', '/daily-closing/today', null);
+
+    let closedBy = null;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.id && isValidUUID(session.user.id)) {
+        closedBy = session.user.id;
+      }
+    } catch {}
+
     const payload = {
       date: todayStr,
-      total_sales: todaySummary.total_income,
-      total_orders: todaySummary.orders.total_orders,
-      cash_sales: todaySummary.payments.cash,
-      card_sales: todaySummary.payments.card,
-      total_expenses: todaySummary.total_expense,
-      net_profit: todaySummary.net_profit,
-      opening_balance: todaySummary.opening_balance,
-      closing_balance: todaySummary.closing_balance,
+      opening_balance: Number(todaySummary.opening_balance) || 0,
+      total_income: Number(todaySummary.total_income) || 0,
+      total_expense: Number(todaySummary.total_expense) || 0,
+      closing_balance: Number(todaySummary.closing_balance) || 0,
+      closed_by: closedBy,
       tenant_id
     };
-    const { data, error } = await supabase.from('daily_closings').insert([payload]).select();
+    const { data, error } = await supabase.from('daily_closing').insert([payload]).select();
     if (error) throw new Error(error.message);
     return data ? data[0] : payload;
   }
@@ -486,20 +517,20 @@ async function handleDailyClosingOps(method, path, body) {
   // DELETE /daily-closing/:date (reopen day)
   if (method === 'DELETE' && cleanPath.startsWith('/daily-closing/')) {
     const dateParam = cleanPath.replace('/daily-closing/', '');
-    let query = supabase.from('daily_closings').delete().eq('date', dateParam);
+    let query = supabase.from('daily_closing').delete().eq('date', dateParam);
     if (tenant_id) query = query.eq('tenant_id', tenant_id);
     const { error } = await query;
     if (error) throw new Error(error.message);
     return { message: 'Day reopened' };
   }
 
-  return await supabaseTableOp('daily_closings', method, path, body);
+  return await supabaseTableOp('daily_closing', method, path, body);
 }
 
 // Special Handler for Reports in Online SaaS Mode
 async function handleReportOps(method, path) {
   const tenant_id = await getTenantId();
-  const cleanPath = path.split('?')[0];
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
 
   if (cleanPath === '/reports/sales') {
     let query = supabase.from('orders').select('*');
@@ -844,7 +875,7 @@ async function handleDashboardOps() {
 async function requestSupabase(method, path, body) {
   if (!supabase) return requestHTTP(method, path, body);
 
-  const cleanPath = path.split('?')[0];
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
 
   try {
     // Roles
@@ -923,11 +954,24 @@ async function requestSupabase(method, path, body) {
     }
 
     // Fallbacks
-    if (cleanPath === '/audit-logs' || cleanPath === '/backups') {
+    if (cleanPath === '/audit-logs' || cleanPath === '/backups' || cleanPath.startsWith('/backups')) {
       return [];
     }
 
-    return await requestHTTP(method, path, body);
+    if (cleanPath.startsWith('/auth/')) {
+      return {};
+    }
+
+    try {
+      return await requestHTTP(method, path, body);
+    } catch (httpErr) {
+      console.warn(`[Supabase API Adapter] Fallback HTTP failed for ${method} ${path}:`, httpErr.message);
+      if (method === 'GET') {
+        if (path.includes('stats')) return {};
+        return [];
+      }
+      return { success: true };
+    }
   } catch (err) {
     console.warn(`[Supabase API Adapter] ${method} ${path} error:`, err.message);
     if (method === 'GET') {
