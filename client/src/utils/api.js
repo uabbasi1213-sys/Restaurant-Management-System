@@ -1046,6 +1046,47 @@ async function handleSupplierOps(method, path, body) {
     return { success: true, message: 'Payment recorded', balance: newBal };
   }
 
+  // POST /suppliers
+  if (method === 'POST' && (cleanPath === '/suppliers' || cleanPath === '/api/suppliers')) {
+    const payload = await bodyToPayload(body);
+    let effectiveTenant = payload.tenant_id || tenant_id;
+
+    if (!effectiveTenant && supabase) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        effectiveTenant = session?.user?.user_metadata?.tenant_id;
+        if (!effectiveTenant && session?.user?.id) {
+          const { data: p } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).maybeSingle();
+          if (p?.tenant_id) effectiveTenant = p.tenant_id;
+        }
+      } catch (e) {
+        console.warn('Session tenant resolution warning:', e);
+      }
+    }
+
+    if (!effectiveTenant) {
+      effectiveTenant = localStorage.getItem('tenant_id');
+    }
+
+    const supplierRecord = {
+      tenant_id: effectiveTenant,
+      name: payload.name ? String(payload.name).trim() : '',
+      company: payload.company ? String(payload.company).trim() : null,
+      phone: payload.phone ? String(payload.phone).trim() : null,
+      address: payload.address ? String(payload.address).trim() : null,
+      balance: 0
+    };
+
+    console.log('[handleSupplierOps] Inserting supplier record:', supplierRecord);
+
+    const { data, error } = await supabase.from('suppliers').insert([supplierRecord]).select();
+    if (error) {
+      console.error('[handleSupplierOps] INSERT suppliers error:', error);
+      throw new Error(error.message);
+    }
+    return data ? data[0] : supplierRecord;
+  }
+
   return await supabaseTableOp('suppliers', method, path, body, 'name');
 }
 
