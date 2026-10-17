@@ -9,15 +9,39 @@ function getToken() {
   return localStorage.getItem('desktop_token') || localStorage.getItem('token') || '';
 }
 
+let cachedTenantId = null;
+let lastSessionUserId = null;
+
+if (supabase) {
+  try {
+    supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user?.id) {
+        if (lastSessionUserId !== session.user.id) {
+          cachedTenantId = null;
+          lastSessionUserId = null;
+        }
+      } else {
+        cachedTenantId = null;
+        lastSessionUserId = null;
+      }
+    });
+  } catch (e) {
+    // ignore
+  }
+}
+
 async function getTenantId() {
-  const stored = localStorage.getItem('tenant_id');
-  if (stored) return stored;
   if (supabase) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
+      if (session?.user?.id) {
+        if (cachedTenantId && lastSessionUserId === session.user.id) {
+          return cachedTenantId;
+        }
         const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).maybeSingle();
         if (prof?.tenant_id) {
+          cachedTenantId = prof.tenant_id;
+          lastSessionUserId = session.user.id;
           localStorage.setItem('tenant_id', prof.tenant_id);
           return prof.tenant_id;
         }
@@ -26,8 +50,11 @@ async function getTenantId() {
       // ignore
     }
   }
+  const stored = localStorage.getItem('tenant_id');
+  if (stored) return stored;
   return null;
 }
+
 
 export function getOrderDateString(item) {
   if (!item) return new Date().toLocaleDateString('en-CA');
@@ -150,6 +177,12 @@ async function supabaseTableOp(tableName, method, path, body, orderCol = 'create
     if (payload.amount !== undefined) payload.amount = Number(payload.amount) || 0;
 
     // Schema sanitization for tables with specific column constraints
+    if (tableName === 'suppliers' && payload.balance === undefined) {
+      payload.balance = 0;
+    }
+    if (tableName === 'customers' && payload.balance === undefined) {
+      payload.balance = 0;
+    }
     if (tableName === 'income') {
       delete payload.created_by;
       if (!payload.type) payload.type = 'Sales';
@@ -891,6 +924,320 @@ async function handleDashboardOps() {
   }
 }
 
+// Special Handler for Profiles / Users with enriched table columns
+async function handleUserOps(method, path, body) {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
+
+  if (method === 'GET' && (cleanPath === '/users' || cleanPath === '/api/users')) {
+    let query = supabase.from('profiles').select('*').order('created_at', { ascending: false });
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data: profiles, error } = await query;
+    if (error) return [];
+
+    return (profiles || []).map(p => {
+      const emailPrefix = p.email ? p.email.split('@')[0] : '';
+      const roleStr = p.role || 'staff';
+      return {
+        ...p,
+        username: p.username || emailPrefix || p.full_name || 'user',
+        role_name: roleStr.charAt(0).toUpperCase() + roleStr.slice(1),
+        role_id: roleStr,
+        is_active: p.is_active !== undefined ? !!p.is_active : true
+      };
+    });
+  }
+
+  if (method === 'PUT' && cleanPath.startsWith('/users/')) {
+    const id = cleanPath.replace('/users/', '');
+    const payload = await bodyToPayload(body);
+    const updateData = {};
+    if (payload.full_name !== undefined) updateData.full_name = payload.full_name;
+    if (payload.role_id !== undefined) updateData.role = payload.role_id;
+    if (payload.role !== undefined) updateData.role = payload.role;
+
+    let query = supabase.from('profiles').update(updateData).eq('id', id);
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data, error } = await query.select();
+    if (error) throw new Error(error.message);
+    return data ? data[0] : { success: true };
+  }
+
+  return await supabaseTableOp('profiles', method, path, body);
+}
+
+// Special Handler for Suppliers & Supplier Ledger / Payments
+async function handleSupplierOps(method, path, body) {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
+
+  // GET /suppliers/:id/ledger
+  if (method === 'GET' && cleanPath.endsWith('/ledger')) {
+    const parts = cleanPath.split('/');
+    const supplierId = parts[2];
+
+    let txQuery = supabase.from('supplier_transactions').select('*').eq('supplier_id', supplierId).order('created_at', { ascending: false });
+    if (tenant_id) txQuery = txQuery.eq('tenant_id', tenant_id);
+    const { data: txns } = await txQuery;
+
+    let sQuery = supabase.from('suppliers').select('*').eq('id', supplierId);
+    if (tenant_id) sQuery = sQuery.eq('tenant_id', tenant_id);
+    const { data: supplier } = await sQuery.maybeSingle();
+
+    let totalPurchases = 0;
+    let totalPayments = 0;
+    (txns || []).forEach(t => {
+      const amt = Number(t.amount) || 0;
+      if (t.type === 'purchase' || t.type === 'credit') totalPurchases += amt;
+      else if (t.type === 'payment' || t.type === 'debit') totalPayments += amt;
+    });
+
+    const balance = supplier?.balance !== undefined ? Number(supplier.balance) : (totalPurchases - totalPayments);
+
+    return {
+      transactions: txns || [],
+      totalPurchases,
+      totalPayments,
+      balance
+    };
+  }
+
+  // POST /suppliers/:id/payment
+  if (method === 'POST' && cleanPath.endsWith('/payment')) {
+    const parts = cleanPath.split('/');
+    const supplierId = parts[2];
+    const payload = await bodyToPayload(body);
+    const paymentAmount = Number(payload.amount) || 0;
+    const description = payload.description || 'Payment to supplier';
+
+    // 1. Insert into supplier_transactions
+    const txPayload = {
+      supplier_id: supplierId,
+      type: 'payment',
+      amount: paymentAmount,
+      description,
+      tenant_id
+    };
+    const { error: txErr } = await supabase.from('supplier_transactions').insert([txPayload]);
+    if (txErr) console.warn('Supabase INSERT supplier_transactions warning:', txErr.message);
+
+    // 2. Update suppliers balance
+    let sQuery = supabase.from('suppliers').select('balance').eq('id', supplierId);
+    if (tenant_id) sQuery = sQuery.eq('tenant_id', tenant_id);
+    const { data: sData } = await sQuery.maybeSingle();
+    const currentBal = Number(sData?.balance) || 0;
+    const newBal = currentBal - paymentAmount;
+
+    let updQuery = supabase.from('suppliers').update({ balance: newBal }).eq('id', supplierId);
+    if (tenant_id) updQuery = updQuery.eq('tenant_id', tenant_id);
+    await updQuery;
+
+    return { success: true, message: 'Payment recorded', balance: newBal };
+  }
+
+  return await supabaseTableOp('suppliers', method, path, body, 'name');
+}
+
+// Special Handler for Purchases (with inventory stock and supplier ledger synchronization)
+async function handlePurchaseOps(method, path, body) {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
+
+  // GET /purchases
+  if (method === 'GET' && (cleanPath === '/purchases' || cleanPath.startsWith('/purchases'))) {
+    let query = supabase.from('purchases').select('*').order('created_at', { ascending: false });
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+
+    const urlParts = path.split('?');
+    if (urlParts[1]) {
+      const searchParams = new URLSearchParams(urlParts[1]);
+      const supId = searchParams.get('supplier_id');
+      if (supId) query = query.eq('supplier_id', supId);
+    }
+
+    const { data: purchases, error } = await query;
+    if (error) return [];
+    if (!purchases || purchases.length === 0) return [];
+
+    let sQuery = supabase.from('suppliers').select('id, name');
+    if (tenant_id) sQuery = sQuery.eq('tenant_id', tenant_id);
+    const { data: suppliers } = await sQuery;
+
+    let iQuery = supabase.from('inventory').select('id, name, unit');
+    if (tenant_id) iQuery = iQuery.eq('tenant_id', tenant_id);
+    const { data: inventory } = await iQuery;
+
+    const supplierMap = {};
+    (suppliers || []).forEach(s => { supplierMap[s.id] = s.name; });
+
+    const itemMap = {};
+    (inventory || []).forEach(i => { itemMap[i.id] = i; });
+
+    return purchases.map(p => ({
+      ...p,
+      supplier_name: supplierMap[p.supplier_id] || '—',
+      item_name: itemMap[p.item_id]?.name || '—',
+      item_unit: itemMap[p.item_id]?.unit || ''
+    }));
+  }
+
+  // POST /purchases
+  if (method === 'POST' && (cleanPath === '/purchases' || cleanPath === '/api/purchases')) {
+    const payload = await bodyToPayload(body);
+    const quantity = Number(payload.quantity) || 0;
+    const rate = Number(payload.rate) || 0;
+    const total = Number(payload.total) || (quantity * rate);
+
+    const purchaseRecord = {
+      supplier_id: payload.supplier_id,
+      item_id: payload.item_id,
+      quantity,
+      rate,
+      total,
+      tenant_id
+    };
+
+    const { data: newP, error: pErr } = await supabase.from('purchases').insert([purchaseRecord]).select().single();
+    if (pErr) throw new Error(pErr.message);
+
+    // 1. Auto-increment inventory stock
+    if (payload.item_id) {
+      let invQuery = supabase.from('inventory').select('quantity').eq('id', payload.item_id);
+      if (tenant_id) invQuery = invQuery.eq('tenant_id', tenant_id);
+      const { data: invItem } = await invQuery.maybeSingle();
+      if (invItem) {
+        const newQty = (Number(invItem.quantity) || 0) + quantity;
+        let updateInv = supabase.from('inventory').update({ quantity: newQty, updated_at: new Date().toISOString() }).eq('id', payload.item_id);
+        if (tenant_id) updateInv = updateInv.eq('tenant_id', tenant_id);
+        await updateInv;
+      }
+    }
+
+    // 2. Auto-update supplier balance and log transaction
+    if (payload.supplier_id) {
+      let supQuery = supabase.from('suppliers').select('balance').eq('id', payload.supplier_id);
+      if (tenant_id) supQuery = supQuery.eq('tenant_id', tenant_id);
+      const { data: supItem } = await supQuery.maybeSingle();
+      if (supItem) {
+        const newBal = (Number(supItem.balance) || 0) + total;
+        let updateSup = supabase.from('suppliers').update({ balance: newBal }).eq('id', payload.supplier_id);
+        if (tenant_id) updateSup = updateSup.eq('tenant_id', tenant_id);
+        await updateSup;
+      }
+
+      const txRecord = {
+        supplier_id: payload.supplier_id,
+        type: 'purchase',
+        amount: total,
+        description: `Purchase: ${quantity} units @ Rs. ${rate}`,
+        tenant_id
+      };
+      await supabase.from('supplier_transactions').insert([txRecord]);
+    }
+
+    return newP;
+  }
+
+  // DELETE /purchases/:id (Reverses inventory and supplier balance)
+  if (method === 'DELETE' && cleanPath.startsWith('/purchases/')) {
+    const id = cleanPath.replace('/purchases/', '');
+    let getQuery = supabase.from('purchases').select('*').eq('id', id);
+    if (tenant_id) getQuery = getQuery.eq('tenant_id', tenant_id);
+    const { data: p } = await getQuery.maybeSingle();
+
+    if (p) {
+      if (p.item_id) {
+        let invQuery = supabase.from('inventory').select('quantity').eq('id', p.item_id);
+        if (tenant_id) invQuery = invQuery.eq('tenant_id', tenant_id);
+        const { data: invItem } = await invQuery.maybeSingle();
+        if (invItem) {
+          const revQty = Math.max(0, (Number(invItem.quantity) || 0) - (Number(p.quantity) || 0));
+          let updateInv = supabase.from('inventory').update({ quantity: revQty }).eq('id', p.item_id);
+          if (tenant_id) updateInv = updateInv.eq('tenant_id', tenant_id);
+          await updateInv;
+        }
+      }
+
+      if (p.supplier_id) {
+        let supQuery = supabase.from('suppliers').select('balance').eq('id', p.supplier_id);
+        if (tenant_id) supQuery = supQuery.eq('tenant_id', tenant_id);
+        const { data: supItem } = await supQuery.maybeSingle();
+        if (supItem) {
+          const revBal = (Number(supItem.balance) || 0) - (Number(p.total) || 0);
+          let updateSup = supabase.from('suppliers').update({ balance: revBal }).eq('id', p.supplier_id);
+          if (tenant_id) updateSup = updateSup.eq('tenant_id', tenant_id);
+          await updateSup;
+        }
+      }
+    }
+
+    let delQuery = supabase.from('purchases').delete().eq('id', id);
+    if (tenant_id) delQuery = delQuery.eq('tenant_id', tenant_id);
+    const { error: delErr } = await delQuery;
+    if (delErr) throw new Error(delErr.message);
+
+    return { success: true, message: 'Purchase deleted and reversed' };
+  }
+
+  return await supabaseTableOp('purchases', method, path, body);
+}
+
+// Special Handler for Customers & Customer Details
+async function handleCustomerOps(method, path, body) {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
+
+  // GET /customers/:id/orders
+  if (method === 'GET' && cleanPath.endsWith('/orders')) {
+    const customerId = cleanPath.split('/')[2];
+    let query = supabase.from('orders').select('*').eq('customer_id', customerId).order('created_at', { ascending: false });
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data: orders } = await query;
+    return orders || [];
+  }
+
+  // GET /customers/:id/transactions
+  if (method === 'GET' && cleanPath.endsWith('/transactions')) {
+    const customerId = cleanPath.split('/')[2];
+    let query = supabase.from('orders').select('id, total, payment_type, created_at, status').eq('customer_id', customerId).order('created_at', { ascending: false });
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data: orders } = await query;
+    return (orders || []).map(o => ({
+      id: o.id,
+      type: 'credit',
+      amount: o.total,
+      description: `Order #${o.id.slice(0, 8)} (${o.payment_type})`,
+      created_at: o.created_at
+    }));
+  }
+
+  // POST /customers/:id/transactions
+  if (method === 'POST' && cleanPath.endsWith('/transactions')) {
+    const customerId = cleanPath.split('/')[2];
+    const payload = await bodyToPayload(body);
+    const amount = Number(payload.amount) || 0;
+    const type = payload.type || 'payment';
+
+    let cQuery = supabase.from('customers').select('balance').eq('id', customerId);
+    if (tenant_id) cQuery = cQuery.eq('tenant_id', tenant_id);
+    const { data: customer } = await cQuery.maybeSingle();
+
+    if (customer) {
+      let newBal = Number(customer.balance) || 0;
+      if (type === 'payment') newBal -= amount;
+      else if (type === 'credit') newBal += amount;
+
+      let updQuery = supabase.from('customers').update({ balance: newBal }).eq('id', customerId);
+      if (tenant_id) updQuery = updQuery.eq('tenant_id', tenant_id);
+      await updQuery;
+    }
+
+    return { success: true, message: 'Transaction recorded' };
+  }
+
+  return await supabaseTableOp('customers', method, path, body, 'name');
+}
+
 // Supabase Online Mode Router for Web/SaaS Edition
 async function requestSupabase(method, path, body) {
   if (!supabase) return requestHTTP(method, path, body);
@@ -910,7 +1257,7 @@ async function requestSupabase(method, path, body) {
 
     // Users
     if (cleanPath.startsWith('/users')) {
-      return await supabaseTableOp('profiles', method, path, body);
+      return await handleUserOps(method, path, body);
     }
 
     // Menu Categories
@@ -930,12 +1277,12 @@ async function requestSupabase(method, path, body) {
 
     // Suppliers
     if (cleanPath.startsWith('/suppliers')) {
-      return await supabaseTableOp('suppliers', method, path, body);
+      return await handleSupplierOps(method, path, body);
     }
 
     // Purchases
     if (cleanPath.startsWith('/purchases')) {
-      return await supabaseTableOp('purchases', method, path, body);
+      return await handlePurchaseOps(method, path, body);
     }
 
     // Orders & Kitchen
@@ -945,7 +1292,7 @@ async function requestSupabase(method, path, body) {
 
     // Customers
     if (cleanPath.startsWith('/customers')) {
-      return await supabaseTableOp('customers', method, path, body);
+      return await handleCustomerOps(method, path, body);
     }
 
     // Expenses
