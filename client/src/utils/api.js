@@ -398,9 +398,13 @@ async function handleDailyClosingOps(method, path, body) {
 
   // GET /daily-closing/today
   if (cleanPath === '/daily-closing/today') {
-    let closingQuery = supabase.from('daily_closing').select('*').eq('date', todayStr);
+    let closingQuery = supabase.from('daily_closing').select('*').order('date', { ascending: false });
     if (tenant_id) closingQuery = closingQuery.eq('tenant_id', tenant_id);
-    const { data: closedRec } = await closingQuery.maybeSingle();
+    const { data: allClosings } = await closingQuery;
+
+    const closedDates = new Set((allClosings || []).map(c => c.date));
+    const closedRec = (allClosings || []).find(c => c.date === todayStr);
+    const latestClosedDate = allClosings?.[0]?.date || '';
 
     let ordersQuery = supabase.from('orders').select('*');
     if (tenant_id) ordersQuery = ordersQuery.eq('tenant_id', tenant_id);
@@ -438,7 +442,9 @@ async function handleDailyClosingOps(method, path, body) {
     let incomeManual = 0;
     (incomeData || []).forEach(i => {
       const iDate = getOrderDateString(i);
-      if (iDate === todayStr || i.date === todayStr) incomeManual += Number(i.amount) || 0;
+      const isToday = iDate === todayStr || i.date === todayStr;
+      const isUnclosed = !closedDates.has(iDate) && !closedDates.has(i.date) && (!latestClosedDate || (iDate > latestClosedDate && i.date > latestClosedDate)) && (iDate <= todayStr || i.date <= todayStr);
+      if (isToday || isUnclosed) incomeManual += Number(i.amount) || 0;
     });
 
     let expenseQuery = supabase.from('expenses').select('*');
@@ -446,15 +452,28 @@ async function handleDailyClosingOps(method, path, body) {
     const { data: expenseData } = await expenseQuery;
 
     let totalExpense = 0;
+    const catMap = {};
+
     (expenseData || []).forEach(e => {
-      const eDate = getOrderDateString(e);
-      if (eDate === todayStr || e.date === todayStr) totalExpense += Number(e.amount) || 0;
+      const eDate = getOrderDateString(e) || e.date;
+      const isToday = eDate === todayStr || e.date === todayStr;
+      const isUnclosed = !closedDates.has(eDate) && !closedDates.has(e.date) && (!latestClosedDate || (eDate > latestClosedDate && e.date > latestClosedDate)) && (eDate <= todayStr || e.date <= todayStr);
+
+      if (isToday || isUnclosed) {
+        const amt = Number(e.amount) || 0;
+        totalExpense += amt;
+        const cat = e.category || 'Other';
+        catMap[cat] = (catMap[cat] || 0) + amt;
+      }
     });
 
-    const totalIncome = incomeOrders + incomeManual;
-    const netProfit = totalIncome - totalExpense;
-    const openingBalance = closedRec?.opening_balance || 0;
-    const closingBalance = openingBalance + netProfit;
+    const expenseBreakdown = Object.entries(catMap).map(([category, total]) => ({ category, total }));
+
+    const totalIncome = closedRec?.total_income !== undefined ? Number(closedRec.total_income) : (incomeOrders + incomeManual);
+    const finalTotalExpense = closedRec?.total_expense !== undefined ? Number(closedRec.total_expense) : totalExpense;
+    const netProfit = totalIncome - finalTotalExpense;
+    const openingBalance = closedRec?.opening_balance !== undefined ? Number(closedRec.opening_balance) : 0;
+    const closingBalance = closedRec?.closing_balance !== undefined ? Number(closedRec.closing_balance) : (openingBalance + netProfit);
 
     return {
       date: todayStr,
@@ -463,9 +482,10 @@ async function handleDailyClosingOps(method, path, body) {
       income_orders: incomeOrders,
       income_manual: incomeManual,
       total_income: totalIncome,
-      total_expense: totalExpense,
+      total_expense: finalTotalExpense,
       closing_balance: closingBalance,
       net_profit: netProfit,
+      expenseBreakdown,
       orders: {
         total_orders: totalOrders,
         completed: completedOrders,
