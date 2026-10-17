@@ -34,12 +34,23 @@ async function getTenantId() {
   if (supabase) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.id) {
+      if (session?.user) {
+        // Priority 1: User metadata from auth session JWT (instant, reliable, no RLS dependency)
+        const metaTenant = session.user.user_metadata?.tenant_id;
+        if (metaTenant && isValidUUID(metaTenant)) {
+          cachedTenantId = metaTenant;
+          lastSessionUserId = session.user.id;
+          localStorage.setItem('tenant_id', metaTenant);
+          return metaTenant;
+        }
+
         if (cachedTenantId && lastSessionUserId === session.user.id) {
           return cachedTenantId;
         }
+
+        // Priority 2: Remote profiles table
         const { data: prof } = await supabase.from('profiles').select('tenant_id').eq('id', session.user.id).maybeSingle();
-        if (prof?.tenant_id) {
+        if (prof?.tenant_id && isValidUUID(prof.tenant_id)) {
           cachedTenantId = prof.tenant_id;
           lastSessionUserId = session.user.id;
           localStorage.setItem('tenant_id', prof.tenant_id);
@@ -51,7 +62,7 @@ async function getTenantId() {
     }
   }
   const stored = localStorage.getItem('tenant_id');
-  if (stored) return stored;
+  if (stored && isValidUUID(stored)) return stored;
   return null;
 }
 

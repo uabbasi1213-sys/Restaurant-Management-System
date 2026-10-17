@@ -47,7 +47,7 @@ export default function Suppliers() {
         await api.put(`/suppliers/${editing.id}`, form);
         toast.success('Supplier updated');
       } else {
-        await api.post('/suppliers', form);
+        await api.post('/suppliers', { ...form, tenant_id: profile?.tenant_id });
         toast.success('Supplier added');
       }
       setShowModal(false);

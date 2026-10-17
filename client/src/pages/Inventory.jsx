@@ -62,7 +62,7 @@ export default function Inventory() {
         await api.put('/inventory/' + editing.id, form);
         toast.success('Stock item updated');
       } else {
-        await api.post('/inventory', form);
+        await api.post('/inventory', { ...form, tenant_id: profile?.tenant_id });
         toast.success('Stock item added');
       }
       setShowModal(false);

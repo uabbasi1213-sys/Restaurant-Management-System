@@ -6,6 +6,10 @@ const AuthContext = createContext(null);
 const isElectron = import.meta.env.VITE_MODE === 'electron';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+function isValidUUID(str) {
+  return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
+}
+
 async function localAutoLogin() {
   const res = await fetch(`${API_URL}/api/auth/login`, {
     method: 'POST',
@@ -150,7 +154,14 @@ export function AuthProvider({ children }) {
   const fetchProfileAndTenant = async (authUser) => {
     try {
       const isSuperUserEmail = authUser.email?.toLowerCase() === 'admin@restaurant.com';
-      const defaultTenantId = localStorage.getItem('tenant_id') || '9e3e5a0c-8156-45b9-85d5-166df48b76a9';
+      const metaTenantId = authUser.user_metadata?.tenant_id;
+      const defaultTenantId = (metaTenantId && isValidUUID(metaTenantId))
+        ? metaTenantId
+        : (localStorage.getItem('tenant_id') || null);
+
+      if (metaTenantId) {
+        localStorage.setItem('tenant_id', metaTenantId);
+      }
 
       // Default Admin Profile to guarantee full access and avoid "Staff" lock
       const defaultAdminProfile = {
@@ -159,7 +170,7 @@ export function AuthProvider({ children }) {
         full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Admin',
         role: isSuperUserEmail ? 'super_admin' : 'admin',
         permissions: ['all'],
-        tenant_id: isSuperUserEmail ? null : defaultTenantId,
+        tenant_id: isSuperUserEmail ? null : (metaTenantId || defaultTenantId),
         is_active: true
       };
 
@@ -230,15 +241,16 @@ export function AuthProvider({ children }) {
       console.error('Failed to fetch profile:', err.message);
       // Guarantee fallback admin state instead of blank/locked screen
       setUser(authUser);
+      const fallbackTenant = authUser.user_metadata?.tenant_id || localStorage.getItem('tenant_id') || null;
       setProfile({
         id: authUser.id,
         email: authUser.email,
         full_name: authUser.user_metadata?.full_name || 'Admin',
         role: 'admin',
         permissions: ['all'],
-        tenant_id: localStorage.getItem('tenant_id') || '9e3e5a0c-8156-45b9-85d5-166df48b76a9'
+        tenant_id: fallbackTenant
       });
-      setTenant({ id: localStorage.getItem('tenant_id') || '9e3e5a0c-8156-45b9-85d5-166df48b76a9', name: 'Restaurant Management System' });
+      setTenant({ id: fallbackTenant, name: authUser.user_metadata?.full_name ? `${authUser.user_metadata.full_name}'s Restaurant` : 'Restaurant Management System' });
     } finally {
       setLoading(false);
     }

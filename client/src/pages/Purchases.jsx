@@ -53,7 +53,8 @@ export default function Purchases() {
         supplier_id: form.supplier_id,
         item_id: form.item_id,
         quantity: qty,
-        rate: rate
+        rate: rate,
+        tenant_id: profile?.tenant_id
       });
 
       toast.success('Purchase recorded! Inventory & supplier ledger updated automatically.');

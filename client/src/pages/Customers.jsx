@@ -59,7 +59,7 @@ export default function Customers() {
         await api.put('/customers/' + editing.id, form);
         toast.success('Customer updated');
       } else {
-        await api.post('/customers', form);
+        await api.post('/customers', { ...form, tenant_id: profile?.tenant_id });
         toast.success('Customer added');
       }
       setShowForm(false);
