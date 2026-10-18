@@ -1090,6 +1090,86 @@ async function handleSupplierOps(method, path, body) {
   return await supabaseTableOp('suppliers', method, path, body, 'name');
 }
 
+// Special Handler for Menu Items (supports category_id, search, available query params & category_name join)
+async function handleMenuItemOps(method, path, body) {
+  const tenant_id = await getTenantId();
+  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
+  const urlParts = path.split('?');
+  const searchParams = urlParts[1] ? new URLSearchParams(urlParts[1]) : null;
+
+  if (method === 'GET' && (cleanPath === '/menu/items' || cleanPath === '/menu-items' || cleanPath === '/items')) {
+    let query = supabase.from('menu_items').select('*');
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+
+    if (searchParams) {
+      const catId = searchParams.get('category_id');
+      const search = searchParams.get('search');
+      const available = searchParams.get('available');
+
+      if (catId) query = query.eq('category_id', catId);
+      if (search) query = query.ilike('name', `%${search}%`);
+      if (available === 'true') query = query.eq('is_available', true);
+    }
+
+    query = query.order('name', { ascending: true });
+    const { data: items, error } = await query;
+    if (error) {
+      console.warn('Supabase SELECT menu_items error:', error.message);
+      return [];
+    }
+
+    // Attach category_name by fetching menu_categories
+    let catQuery = supabase.from('menu_categories').select('id, name');
+    if (tenant_id) catQuery = catQuery.eq('tenant_id', tenant_id);
+    const { data: cats } = await catQuery;
+    const catMap = {};
+    (cats || []).forEach(c => { catMap[c.id] = c.name; });
+
+    return (items || []).map(it => ({
+      ...it,
+      category_name: catMap[it.category_id] || ''
+    }));
+  }
+
+  if (method === 'POST') {
+    const payload = await bodyToPayload(body);
+    if (tenant_id && !payload.tenant_id) payload.tenant_id = tenant_id;
+    if (payload.category_id !== undefined) {
+      payload.category_id = isValidUUID(payload.category_id) ? payload.category_id : null;
+    }
+    if (payload.cost_price !== undefined) payload.cost_price = Number(payload.cost_price) || 0;
+    if (payload.sale_price !== undefined) payload.sale_price = Number(payload.sale_price) || 0;
+
+    const { data, error } = await supabase.from('menu_items').insert([payload]).select();
+    if (error) {
+      console.error('Supabase INSERT menu_items error:', error.message);
+      throw new Error(error.message);
+    }
+    return data ? data[0] : payload;
+  }
+
+  const pathParts = cleanPath.split('/');
+  const id = pathParts[pathParts.length - 1];
+
+  if (method === 'PUT' || method === 'PATCH') {
+    const payload = await bodyToPayload(body);
+    delete payload.id;
+    if (payload.category_id !== undefined) {
+      payload.category_id = isValidUUID(payload.category_id) ? payload.category_id : null;
+    }
+    if (payload.cost_price !== undefined) payload.cost_price = Number(payload.cost_price) || 0;
+    if (payload.sale_price !== undefined) payload.sale_price = Number(payload.sale_price) || 0;
+
+    let query = supabase.from('menu_items').update(payload).eq('id', id);
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
+    const { data, error } = await query.select();
+    if (error) throw new Error(error.message);
+    return { message: 'Updated successfully', data: data ? data[0] : null };
+  }
+
+  return await supabaseTableOp('menu_items', method, path, body, 'name');
+}
+
 // Special Handler for Purchases (with inventory stock and supplier ledger synchronization)
 async function handlePurchaseOps(method, path, body) {
   const tenant_id = await getTenantId();
@@ -1319,7 +1399,7 @@ async function requestSupabase(method, path, body) {
 
     // Menu Items
     if (cleanPath.startsWith('/menu/items') || cleanPath.startsWith('/menu-items') || cleanPath.startsWith('/items')) {
-      return await supabaseTableOp('menu_items', method, path, body);
+      return await handleMenuItemOps(method, path, body);
     }
 
     // Inventory

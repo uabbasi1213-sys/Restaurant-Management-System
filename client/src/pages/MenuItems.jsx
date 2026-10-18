@@ -159,12 +159,18 @@ export default function MenuItems() {
     }
   };
 
+  const filteredItems = items.filter(item => {
+    const matchCat = selectedCategory ? item.category_id === selectedCategory : true;
+    const matchSearch = search ? item.name?.toLowerCase().includes(search.toLowerCase()) : true;
+    return matchCat && matchSearch;
+  });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Menu Items</h1>
-          <p className="text-gray-500 text-sm">{items.length} items</p>
+          <p className="text-gray-500 text-sm">{filteredItems.length} items</p>
         </div>
         <button onClick={openAdd} className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2.5 rounded-xl font-medium transition">
           <Plus size={18} /> Add Item
@@ -210,7 +216,7 @@ export default function MenuItems() {
 
       {/* Items Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {items.map(item => (
+        {filteredItems.map(item => (
           <div key={item.id} className={`bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md transition ${!item.is_available ? 'opacity-60' : ''}`}>
             {/* Image */}
             <div className="relative aspect-[4/3] bg-gray-100">
@@ -268,7 +274,7 @@ export default function MenuItems() {
           </div>
         ))}
 
-        {items.length === 0 && (
+        {filteredItems.length === 0 && (
           <div className="col-span-full text-center py-16 bg-white rounded-xl shadow-sm">
             <ImageIcon size={48} className="mx-auto text-gray-300 mb-3" />
             <p className="text-gray-400 mb-2">No menu items found</p>
