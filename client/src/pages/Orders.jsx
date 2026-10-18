@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import {
   ClipboardList, Eye, X, Printer, Pencil,
-  Plus, Minus, Trash2, ShoppingCart, ImageIcon, Search
+  Plus, Minus, Trash2, ShoppingCart, ImageIcon, Search, UtensilsCrossed
 } from 'lucide-react';
 import InvoiceModal from '../components/InvoiceModal';
 
@@ -263,7 +263,15 @@ export default function Orders() {
                       {order.order_type}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">{order.table_number || '—'}</td>
+                  <td className="px-6 py-4">
+                    {order.table_number ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <UtensilsCrossed size={12} /> {order.table_number}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
+                  </td>
                   <td className="px-6 py-4">
                     <span className={`px-2.5 py-1 rounded-lg text-xs font-medium capitalize ${STATUS_COLORS[order.status]}`}>
                       {order.status}

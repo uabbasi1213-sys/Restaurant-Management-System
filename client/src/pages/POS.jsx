@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
-import { Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer, Eye } from 'lucide-react';
+import {
+  Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer, Eye,
+  UtensilsCrossed, Settings, RefreshCw, CheckCircle2
+} from 'lucide-react';
 import InvoiceModal from '../components/InvoiceModal';
 import { printInvoice } from '../utils/printInvoice';
 
@@ -23,9 +26,24 @@ export default function POS() {
   const [printOrderId, setPrintOrderId] = useState(null);
   const [autoPrint, setAutoPrint] = useState(() => localStorage.getItem('pos_auto_print') === 'true');
 
+  // Table Management & Running Order State
+  const [activeOrders, setActiveOrders] = useState([]);
+  const [activeTableOrder, setActiveTableOrder] = useState(null);
+  const [tablesList, setTablesList] = useState(() => {
+    try {
+      const saved = localStorage.getItem('restaurant_tables');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return Array.from({ length: 12 }, (_, i) => `Table ${i + 1}`);
+  });
+  const [showTableModal, setShowTableModal] = useState(false);
+  const [tableCountInput, setTableCountInput] = useState(12);
+  const [customTableName, setCustomTableName] = useState('');
+
   useEffect(() => {
     if (profile) {
       loadMenu();
+      loadActiveOrders();
     }
   }, [profile?.id]);
 
@@ -90,6 +108,164 @@ export default function POS() {
   const discountAmount = parseFloat(discount) || 0;
   const grandTotal = subtotal + taxAmount - discountAmount;
 
+  const loadActiveOrders = async () => {
+    try {
+      const allOrders = await api.get('/orders');
+      const active = (allOrders || []).filter(o => 
+        o.order_type === 'dine-in' &&
+        ['pending', 'preparing', 'ready'].includes(o.status) &&
+        o.table_number
+      );
+      setActiveOrders(active);
+    } catch (err) {
+      console.warn('Failed to load active orders for tables:', err);
+    }
+  };
+
+  const handleSelectTable = (tbl) => {
+    setTableNumber(tbl);
+    const existing = activeOrders.find(o => o.table_number === tbl);
+    if (existing) {
+      setActiveTableOrder(existing);
+      if (existing.items && existing.items.length > 0) {
+        setCart(existing.items.map(it => ({
+          menu_item_id: it.menu_item_id,
+          item_name: it.item_name || it.name,
+          price: Number(it.price) || 0,
+          quantity: Number(it.quantity) || 1,
+          total: Number(it.total) || ((Number(it.price) || 0) * (Number(it.quantity) || 1)),
+          special_instructions: it.special_instructions || '',
+          image: it.image
+        })));
+      }
+      setDiscount(existing.discount ? String(existing.discount) : '');
+      setTax(existing.tax ? String(existing.tax) : '');
+      setPaymentType(existing.payment_type || 'cash');
+      setSpecialInstructions(existing.special_instructions || '');
+      toast(`Loaded running order for ${tbl}`, { icon: '🍽️' });
+    } else {
+      setActiveTableOrder(null);
+      if (activeTableOrder) {
+        setCart([]);
+        setDiscount('');
+        setTax('');
+        setSpecialInstructions('');
+      }
+    }
+  };
+
+  const startFreshOrderOnTable = () => {
+    setActiveTableOrder(null);
+    setCart([]);
+    setDiscount('');
+    setTax('');
+    setSpecialInstructions('');
+    toast.success(`Started new order for ${tableNumber || 'table'}`);
+  };
+
+  const updateTableOrder = async () => {
+    if (!activeTableOrder) return;
+    if (cart.length === 0) return toast.error('Cart is empty!');
+    try {
+      const updated = await api.put(`/orders/${activeTableOrder.id}`, {
+        order_type: 'dine-in',
+        table_number: tableNumber,
+        total: grandTotal,
+        subtotal: subtotal,
+        discount: discountAmount,
+        tax: taxAmount,
+        payment_type: paymentType,
+        special_instructions: specialInstructions || null,
+        status: activeTableOrder.status || 'preparing',
+        items: cart.map(item => ({
+          menu_item_id: item.menu_item_id,
+          item_name: item.item_name,
+          quantity: item.quantity,
+          price: item.price,
+          total: item.total,
+          special_instructions: item.special_instructions || null
+        }))
+      });
+
+      toast.success(`Table ${tableNumber} updated with new items!`);
+      await loadActiveOrders();
+      if (autoPrint) {
+        setTimeout(() => printInvoice(updated, tenant), 150);
+      }
+    } catch (err) {
+      toast.error('Failed to update table order: ' + err.message);
+    }
+  };
+
+  const settleTableBill = async () => {
+    if (!activeTableOrder) return;
+    try {
+      const completed = await api.put(`/orders/${activeTableOrder.id}`, {
+        order_type: 'dine-in',
+        table_number: tableNumber,
+        total: grandTotal,
+        subtotal: subtotal,
+        discount: discountAmount,
+        tax: taxAmount,
+        payment_type: paymentType,
+        status: 'completed',
+        items: cart.map(item => ({
+          menu_item_id: item.menu_item_id,
+          item_name: item.item_name,
+          quantity: item.quantity,
+          price: item.price,
+          total: item.total,
+          special_instructions: item.special_instructions || null
+        }))
+      });
+
+      toast.success(`Table ${tableNumber} bill settled! Table is now free.`);
+      setTimeout(() => printInvoice(completed, tenant), 150);
+      setCart([]);
+      setDiscount('');
+      setTax('');
+      setTableNumber('');
+      setSpecialInstructions('');
+      setActiveTableOrder(null);
+      await loadActiveOrders();
+    } catch (err) {
+      toast.error('Failed to settle bill: ' + err.message);
+    }
+  };
+
+  const saveTableCount = (count) => {
+    const num = Math.max(1, Math.min(100, parseInt(count) || 10));
+    const newTables = Array.from({ length: num }, (_, i) => `Table ${i + 1}`);
+    setTablesList(newTables);
+    try {
+      localStorage.setItem('restaurant_tables', JSON.stringify(newTables));
+    } catch {}
+    setShowTableModal(false);
+    toast.success(`${num} tables configured!`);
+  };
+
+  const addCustomTable = () => {
+    const trimmed = customTableName.trim();
+    if (!trimmed) return;
+    if (tablesList.includes(trimmed)) return toast.error('Table already exists');
+    const updated = [...tablesList, trimmed];
+    setTablesList(updated);
+    try {
+      localStorage.setItem('restaurant_tables', JSON.stringify(updated));
+    } catch {}
+    setCustomTableName('');
+    toast.success(`Added ${trimmed}!`);
+  };
+
+  const removeTable = (tbl) => {
+    const updated = tablesList.filter(t => t !== tbl);
+    setTablesList(updated);
+    try {
+      localStorage.setItem('restaurant_tables', JSON.stringify(updated));
+    } catch {}
+    if (tableNumber === tbl) setTableNumber('');
+  };
+
   const placeOrder = async () => {
     if (cart.length === 0) return toast.error('Cart is empty!');
     try {
@@ -119,7 +295,9 @@ export default function POS() {
       setTax('');
       setTableNumber('');
       setSpecialInstructions('');
+      setActiveTableOrder(null);
       toast.success(`Order ${orderData.order_number} placed!`);
+      loadActiveOrders();
 
       if (autoPrint) {
         setTimeout(() => printInvoice(orderData, tenant), 150);
@@ -168,13 +346,67 @@ export default function POS() {
         </div>
 
         {orderType === 'dine-in' && (
-          <input
-            type="text"
-            value={tableNumber}
-            onChange={e => setTableNumber(e.target.value)}
-            placeholder="Table number..."
-            className="w-full mt-2 px-3 py-2 rounded-lg border text-sm focus:ring-2 focus:ring-orange-500 outline-none"
-          />
+          <div className="mt-2 space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-gray-700 flex items-center gap-1">
+                <UtensilsCrossed size={12} className="text-orange-600" /> Table Selection
+              </span>
+              <button
+                type="button"
+                onClick={() => { setTableCountInput(tablesList.length); setShowTableModal(true); }}
+                className="text-[11px] text-orange-600 hover:text-orange-800 font-medium flex items-center gap-0.5"
+              >
+                <Settings size={11} /> Manage ({tablesList.length})
+              </button>
+            </div>
+
+            <div className="flex gap-1.5">
+              <select
+                value={tableNumber}
+                onChange={e => handleSelectTable(e.target.value)}
+                className="flex-1 px-2.5 py-1.5 rounded-lg border text-xs font-semibold focus:ring-2 focus:ring-orange-500 outline-none bg-white"
+              >
+                <option value="">-- Choose Table --</option>
+                {tablesList.map(t => {
+                  const running = activeOrders.find(o => o.table_number === t);
+                  return (
+                    <option key={t} value={t}>
+                      {t} {running ? `• Occupied (Rs. ${running.total})` : '• Free'}
+                    </option>
+                  );
+                })}
+              </select>
+              <input
+                type="text"
+                value={tableNumber}
+                onChange={e => setTableNumber(e.target.value)}
+                placeholder="Or type..."
+                className="w-20 px-2 py-1.5 rounded-lg border text-xs focus:ring-2 focus:ring-orange-500 outline-none"
+                title="Custom Table Name"
+              />
+            </div>
+
+            {activeTableOrder && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-2 text-xs">
+                <div className="flex items-center justify-between font-bold text-orange-800">
+                  <span>🍽️ Active: {activeTableOrder.order_number}</span>
+                  <span className="bg-orange-200 text-orange-900 px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold">
+                    {activeTableOrder.status}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between mt-1 text-[11px] text-gray-600">
+                  <span>Running Total: <strong>Rs. {Number(activeTableOrder.total || 0).toFixed(0)}</strong></span>
+                  <button
+                    type="button"
+                    onClick={startFreshOrderOnTable}
+                    className="text-red-600 hover:underline font-medium text-[10px]"
+                  >
+                    Start Fresh
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -285,12 +517,32 @@ export default function POS() {
             </label>
           </div>
 
-          <button
-            onClick={() => { placeOrder(); if (isMobile) setMobileCartOpen(false); }}
-            className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl font-bold text-lg transition flex items-center justify-center gap-2 active:scale-95"
-          >
-            <Send size={20} /> Place Order
-          </button>
+          {activeTableOrder ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => { updateTableOrder(); if (isMobile) setMobileCartOpen(false); }}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 active:scale-95 shadow-sm"
+              >
+                <RefreshCw size={16} /> Update Table ({activeTableOrder.order_number})
+              </button>
+              <button
+                type="button"
+                onClick={() => { settleTableBill(); if (isMobile) setMobileCartOpen(false); }}
+                className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-base transition flex items-center justify-center gap-2 active:scale-95 shadow-sm"
+              >
+                <CheckCircle2 size={18} /> Settle Bill & Free Table
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { placeOrder(); if (isMobile) setMobileCartOpen(false); }}
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl font-bold text-lg transition flex items-center justify-center gap-2 active:scale-95"
+            >
+              <Send size={20} /> Place Order
+            </button>
+          )}
         </div>
       )}
     </>
@@ -327,6 +579,52 @@ export default function POS() {
             ))}
           </div>
         </div>
+
+        {/* Quick Tables Bar (Dine-In) */}
+        {orderType === 'dine-in' && (
+          <div className="mb-3 bg-white p-2.5 rounded-xl border border-gray-200 shadow-sm">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                <UtensilsCrossed size={14} className="text-orange-600" /> Tables
+                <span className="text-[11px] font-normal text-gray-500">
+                  ({activeOrders.length} occupied / {tablesList.length} total)
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => { setTableCountInput(tablesList.length); setShowTableModal(true); }}
+                className="text-xs text-orange-600 hover:text-orange-800 font-semibold flex items-center gap-1 hover:underline"
+              >
+                <Settings size={12} /> Manage Tables
+              </button>
+            </div>
+            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
+              {tablesList.map(t => {
+                const running = activeOrders.find(o => o.table_number === t);
+                const isSelected = tableNumber === t;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => handleSelectTable(t)}
+                    className={`flex-shrink-0 px-3 py-1.5 rounded-lg border text-xs transition-all flex flex-col items-center min-w-[70px] ${
+                      isSelected
+                        ? 'bg-orange-600 text-white border-orange-600 shadow-sm'
+                        : running
+                        ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
+                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    <span className="font-bold">{t}</span>
+                    <span className={`text-[10px] ${isSelected ? 'text-orange-100' : running ? 'text-amber-700 font-bold' : 'text-gray-400'}`}>
+                      {running ? `Rs. ${Number(running.total || 0).toFixed(0)}` : 'Free'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Items Grid */}
         <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
@@ -439,6 +737,115 @@ export default function POS() {
             >
               <Eye size={13} /> Preview receipt modal
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Table Management Modal */}
+      {showTableModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl p-6">
+            <div className="flex items-center justify-between pb-3 border-b mb-4">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <UtensilsCrossed className="text-orange-600" size={20} />
+                Manage Restaurant Tables
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowTableModal(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Quick Set Count */}
+            <div className="mb-4 bg-orange-50 border border-orange-100 rounded-xl p-3">
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                Quick Setup Table Count (e.g. 10 or 20 tables)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={tableCountInput}
+                  onChange={e => setTableCountInput(e.target.value)}
+                  className="flex-1 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-orange-500 bg-white"
+                  placeholder="e.g. 10"
+                />
+                <button
+                  type="button"
+                  onClick={saveTableCount}
+                  className="px-4 py-2 bg-orange-600 text-white rounded-lg text-xs font-bold hover:bg-orange-700 transition"
+                >
+                  Set Tables
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">
+                Generates T-1, T-2, ... up to the chosen count.
+              </p>
+            </div>
+
+            {/* Add Custom Named Table */}
+            <div className="mb-4">
+              <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                Or Add Custom Table / Area (e.g. Roof-1, VIP-2, Hall-A)
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customTableName}
+                  onChange={e => setCustomTableName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomTable(); } }}
+                  placeholder="e.g. VIP-1"
+                  className="flex-1 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-orange-500"
+                />
+                <button
+                  type="button"
+                  onClick={addCustomTable}
+                  className="px-4 py-2 bg-gray-800 text-white rounded-lg text-xs font-bold hover:bg-gray-900 transition"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+
+            {/* Current Tables List */}
+            <div className="mb-4">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-bold text-gray-700">Active Tables ({tablesList.length})</span>
+                <span className="text-[11px] text-gray-400">Click × to remove</span>
+              </div>
+              <div className="max-h-48 overflow-y-auto border rounded-xl p-2.5 flex flex-wrap gap-1.5 bg-gray-50">
+                {tablesList.map(t => (
+                  <span
+                    key={t}
+                    className="inline-flex items-center gap-1.5 bg-white border border-gray-300 text-gray-800 px-2.5 py-1 rounded-lg text-xs font-semibold shadow-sm"
+                  >
+                    {t}
+                    <button
+                      type="button"
+                      onClick={() => removeTable(t)}
+                      className="text-gray-400 hover:text-red-600 font-bold ml-0.5"
+                      title="Delete Table"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowTableModal(false)}
+                className="w-full py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl text-sm transition"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}
