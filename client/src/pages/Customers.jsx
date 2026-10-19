@@ -82,7 +82,28 @@ export default function Customers() {
       const freshCust = (Array.isArray(allCust) ? allCust : []).find(c => String(c.id) === String(customer.id)) || customer;
       const txns = await api.get('/customers/' + customer.id + '/transactions');
       const orders = await api.get('/customers/' + customer.id + '/orders');
-      setSelectedCustomer({ ...freshCust, transactions: txns || [], orders: orders || [] });
+
+      // Calculate total credit orders (plus them all up)
+      const totalCredit = (txns || [])
+        .filter(t => t.type === 'credit')
+        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+      // Calculate total payments received
+      const totalPaid = (txns || [])
+        .filter(t => t.type === 'payment')
+        .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+      // Remaining net balance (positive = owes udhar, negative = advance)
+      const netBalance = totalCredit - totalPaid;
+
+      setSelectedCustomer({
+        ...freshCust,
+        balance: netBalance,
+        totalCredit,
+        totalPaid,
+        transactions: txns || [],
+        orders: orders || []
+      });
     } catch (err) { toast.error(err.message); }
   };
 
@@ -235,25 +256,57 @@ export default function Customers() {
 
             <div className="flex-1 overflow-y-auto p-5">
               {/* Balance & Stats */}
-              <div className="grid grid-cols-3 gap-3 mb-5">
-                <div className="bg-gray-50 rounded-xl p-4 text-center">
-                  <p className="text-xs text-gray-500 mb-1">Balance</p>
-                  <p className={`text-xl font-bold ${selectedCustomer.balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4">
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+                  <p className="text-[11px] font-semibold text-amber-800 mb-0.5">Total Udhar (Orders)</p>
+                  <p className="text-lg font-bold text-amber-900">
+                    Rs. {(selectedCustomer.totalCredit !== undefined ? selectedCustomer.totalCredit : 0).toFixed(2)}
+                  </p>
+                  <p className="text-[10px] text-amber-700 font-medium">{selectedCustomer.orders?.length || 0} orders</p>
+                </div>
+                <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-center">
+                  <p className="text-[11px] font-semibold text-green-800 mb-0.5">Wusooli (Paid)</p>
+                  <p className="text-lg font-bold text-green-700">
+                    Rs. {(selectedCustomer.totalPaid !== undefined ? selectedCustomer.totalPaid : 0).toFixed(2)}
+                  </p>
+                  <p className="text-[10px] text-green-600 font-medium">Received cash</p>
+                </div>
+                <div className={`rounded-xl p-3 text-center border ${
+                  (selectedCustomer.balance || 0) > 0
+                    ? 'bg-red-50 border-red-200'
+                    : (selectedCustomer.balance || 0) < 0
+                    ? 'bg-blue-50 border-blue-200'
+                    : 'bg-gray-50 border-gray-200'
+                }`}>
+                  <p className="text-[11px] font-semibold text-gray-700 mb-0.5">Baqi Leni Hai</p>
+                  <p className={`text-lg font-bold ${
+                    (selectedCustomer.balance || 0) > 0
+                      ? 'text-red-600'
+                      : (selectedCustomer.balance || 0) < 0
+                      ? 'text-blue-600'
+                      : 'text-gray-600'
+                  }`}>
                     Rs. {Math.abs(selectedCustomer.balance || 0).toFixed(2)}
                   </p>
-                  <p className="text-xs text-gray-400">{selectedCustomer.balance > 0 ? 'Outstanding' : selectedCustomer.balance < 0 ? 'Advance' : 'Clear'}</p>
+                  <p className={`text-[10px] font-bold ${
+                    (selectedCustomer.balance || 0) > 0 ? 'text-red-600' : 'text-blue-600'
+                  }`}>
+                    {(selectedCustomer.balance || 0) > 0 ? 'Leni Hai (Udhar)' : (selectedCustomer.balance || 0) < 0 ? 'Advance' : 'Clear (Nil)'}
+                  </p>
                 </div>
-                <div className="bg-gray-50 rounded-xl p-4 text-center">
-                  <p className="text-xs text-gray-500 mb-1">Total Orders</p>
-                  <p className="text-xl font-bold text-gray-800">{selectedCustomer.orders?.length || 0}</p>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-4 text-center">
-                  <p className="text-xs text-gray-500 mb-1">Add Transaction</p>
-                  <button onClick={openTxnForm} className="bg-orange-600 hover:bg-orange-700 text-white px-4 py-1.5 rounded-lg text-sm font-semibold transition">
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-center flex flex-col justify-center items-center">
+                  <p className="text-[11px] font-semibold text-gray-600 mb-1">Receive Payment</p>
+                  <button onClick={openTxnForm} className="w-full bg-orange-600 hover:bg-orange-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs">
                     + Payment
                   </button>
                 </div>
               </div>
+
+              {(selectedCustomer.balance || 0) > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-2.5 mb-4 text-xs font-semibold text-red-800 flex items-center justify-between">
+                  <span>📌 Is customer se kul <strong>Rs. {(selectedCustomer.balance || 0).toFixed(2)}</strong> udhar lena baqi hai.</span>
+                </div>
+              )}
 
               {/* Transactions */}
               <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Wallet size={16} /> Transactions</h4>

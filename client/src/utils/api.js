@@ -1475,6 +1475,47 @@ async function handleCustomerOps(method, path, body) {
     return { success: true, message: 'Transaction recorded' };
   }
 
+  // GET /customers (dynamically calculate live balance and stats)
+  if (method === 'GET' && (cleanPath === '/customers' || cleanPath === '')) {
+    let cQuery = supabase.from('customers').select('*').order('name');
+    if (tenant_id) cQuery = cQuery.eq('tenant_id', tenant_id);
+    const { data: customers } = await cQuery;
+
+    let oQuery = supabase.from('orders').select('customer_id, total, payment_type');
+    if (tenant_id) oQuery = oQuery.eq('tenant_id', tenant_id);
+    const { data: allOrders } = await oQuery;
+
+    let iQuery = supabase.from('income').select('amount, description').eq('type', 'Customer Payment');
+    if (tenant_id) iQuery = iQuery.eq('tenant_id', tenant_id);
+    const { data: allPayments } = await iQuery;
+
+    return (customers || []).map(cust => {
+      const custOrders = (allOrders || []).filter(o => String(o.customer_id) === String(cust.id));
+      const creditSum = custOrders
+        .filter(o => o.payment_type === 'credit')
+        .reduce((sum, o) => sum + (Number(o.total) || 0), 0);
+
+      const paidSum = (allPayments || [])
+        .filter(p => p.description && (p.description.includes(cust.id) || p.description.includes(cust.name)))
+        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+      const liveBalance = creditSum - paidSum;
+
+      if (Number(cust.balance) !== liveBalance) {
+        supabase.from('customers').update({ balance: liveBalance }).eq('id', cust.id).then(() => {});
+      }
+
+      return {
+        ...cust,
+        balance: liveBalance,
+        total_orders: custOrders.length,
+        total_spent: custOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0),
+        total_credit: creditSum,
+        total_paid: paidSum
+      };
+    });
+  }
+
   return await supabaseTableOp('customers', method, path, body, 'name');
 }
 
