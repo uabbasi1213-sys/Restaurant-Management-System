@@ -366,6 +366,29 @@ async function handleOrderOps(method, path, body) {
       }
     }
 
+    // If Credit (Udhar) sale with customer_id, update customer's outstanding balance
+    if (payload.customer_id && payload.payment_type === 'credit') {
+      try {
+        let cQuery = supabase.from('customers').select('balance, total_orders, total_spent').eq('id', payload.customer_id);
+        if (tenant_id) cQuery = cQuery.eq('tenant_id', tenant_id);
+        const { data: cust } = await cQuery.maybeSingle();
+        if (cust) {
+          const newBal = (Number(cust.balance) || 0) + (Number(payload.total) || 0);
+          const newOrders = (Number(cust.total_orders) || 0) + 1;
+          const newSpent = (Number(cust.total_spent) || 0) + (Number(payload.total) || 0);
+          let updQuery = supabase.from('customers').update({
+            balance: newBal,
+            total_orders: newOrders,
+            total_spent: newSpent
+          }).eq('id', payload.customer_id);
+          if (tenant_id) updQuery = updQuery.eq('tenant_id', tenant_id);
+          await updQuery;
+        }
+      } catch (custErr) {
+        console.warn('Failed to update customer balance on credit order:', custErr);
+      }
+    }
+
     return { ...newOrder, items: insertedItems.length > 0 ? insertedItems : cartItems };
   }
 
@@ -398,6 +421,29 @@ async function handleOrderOps(method, path, body) {
     if (tenant_id) query = query.eq('tenant_id', tenant_id);
     const { data, error } = await query.select();
     if (error) throw new Error(error.message);
+
+    // If Credit (Udhar) sale with customer_id on settle/update, update customer's balance
+    if (payload.customer_id && payload.payment_type === 'credit') {
+      try {
+        let cQuery = supabase.from('customers').select('balance, total_orders, total_spent').eq('id', payload.customer_id);
+        if (tenant_id) cQuery = cQuery.eq('tenant_id', tenant_id);
+        const { data: cust } = await cQuery.maybeSingle();
+        if (cust) {
+          const newBal = (Number(cust.balance) || 0) + (Number(payload.total) || 0);
+          const newOrders = (Number(cust.total_orders) || 0) + 1;
+          const newSpent = (Number(cust.total_spent) || 0) + (Number(payload.total) || 0);
+          let updQuery = supabase.from('customers').update({
+            balance: newBal,
+            total_orders: newOrders,
+            total_spent: newSpent
+          }).eq('id', payload.customer_id);
+          if (tenant_id) updQuery = updQuery.eq('tenant_id', tenant_id);
+          await updQuery;
+        }
+      } catch (custErr) {
+        console.warn('Failed to update customer balance on settled table order:', custErr);
+      }
+    }
 
     // Replace order items if provided
     if (cartItems && cartItems.length > 0) {
@@ -462,16 +508,35 @@ async function handleDailyClosingOps(method, path, body) {
     let cashPay = 0;
     let cardPay = 0;
     let onlinePay = 0;
+    let creditPay = 0;
+    let cashCount = 0;
+    let cardCount = 0;
+    let onlineCount = 0;
+    let creditCount = 0;
 
     (ordersData || []).forEach(o => {
       const orderDate = getOrderDateString(o);
       if (orderDate === todayStr) {
         totalOrders++;
+        const oTotal = Number(o.total) || 0;
         if (o.status === 'completed' || o.status === 'ready' || o.status === 'preparing') {
-          incomeOrders += Number(o.total) || 0;
-          if (o.payment_type === 'card') cardPay += Number(o.total) || 0;
-          else if (o.payment_type === 'online') onlinePay += Number(o.total) || 0;
-          else cashPay += Number(o.total) || 0;
+          if (o.payment_type === 'credit') {
+            // NOTE: Credit (udhar) sales are UNCOLLECTED debt, NOT added to incomeOrders or cashPay!
+            creditPay += oTotal;
+            creditCount++;
+          } else if (o.payment_type === 'card') {
+            incomeOrders += oTotal;
+            cardPay += oTotal;
+            cardCount++;
+          } else if (o.payment_type === 'online') {
+            incomeOrders += oTotal;
+            onlinePay += oTotal;
+            onlineCount++;
+          } else {
+            incomeOrders += oTotal;
+            cashPay += oTotal;
+            cashCount++;
+          }
         }
         if (o.status === 'completed') completedOrders++;
         else if (o.status === 'cancelled') cancelledOrders++;
@@ -519,6 +584,13 @@ async function handleDailyClosingOps(method, path, body) {
     const openingBalance = closedRec?.opening_balance !== undefined ? Number(closedRec.opening_balance) : 0;
     const closingBalance = closedRec?.closing_balance !== undefined ? Number(closedRec.closing_balance) : (openingBalance + netProfit);
 
+    const paymentBreakdown = [
+      { payment_type: 'cash', total: cashPay, count: cashCount },
+      { payment_type: 'card', total: cardPay, count: cardCount },
+      { payment_type: 'online', total: onlinePay, count: onlineCount },
+      { payment_type: 'credit', total: creditPay, count: creditCount }
+    ].filter(p => p.count > 0 || p.total > 0);
+
     return {
       date: todayStr,
       is_closed: !!closedRec,
@@ -539,8 +611,10 @@ async function handleDailyClosingOps(method, path, body) {
       payments: {
         cash: cashPay,
         card: cardPay,
-        online: onlinePay
-      }
+        online: onlinePay,
+        credit: creditPay
+      },
+      paymentBreakdown
     };
   }
 
@@ -1331,16 +1405,34 @@ async function handleCustomerOps(method, path, body) {
   // GET /customers/:id/transactions
   if (method === 'GET' && cleanPath.endsWith('/transactions')) {
     const customerId = cleanPath.split('/')[2];
-    let query = supabase.from('orders').select('id, total, payment_type, created_at, status').eq('customer_id', customerId).order('created_at', { ascending: false });
+    let query = supabase.from('orders').select('id, order_number, total, payment_type, created_at, status').eq('customer_id', customerId).order('created_at', { ascending: false });
     if (tenant_id) query = query.eq('tenant_id', tenant_id);
     const { data: orders } = await query;
-    return (orders || []).map(o => ({
+    const orderTxns = (orders || []).map(o => ({
       id: o.id,
-      type: 'credit',
-      amount: o.total,
-      description: `Order #${o.id.slice(0, 8)} (${o.payment_type})`,
+      type: o.payment_type === 'credit' ? 'credit' : 'payment',
+      amount: Number(o.total) || 0,
+      description: o.order_number ? `Order ${o.order_number} (${o.payment_type || 'credit'})` : `Order #${o.id.slice(0, 8)} (${o.payment_type})`,
       created_at: o.created_at
     }));
+
+    // Also get manual payments recorded in income table for this customer
+    let incQuery = supabase.from('income').select('id, amount, description, date, created_at').eq('type', 'Customer Payment');
+    if (tenant_id) incQuery = incQuery.eq('tenant_id', tenant_id);
+    const { data: payments } = await incQuery;
+
+    const custPayments = (payments || [])
+      .filter(p => p.description && p.description.includes(customerId))
+      .map(p => ({
+        id: p.id,
+        type: 'payment',
+        amount: Number(p.amount) || 0,
+        description: p.description.replace(/\[CID:[^\]]+\]\s*/, '') || 'Cash Payment',
+        created_at: p.created_at || p.date
+      }));
+
+    const allTxns = [...orderTxns, ...custPayments].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    return allTxns;
   }
 
   // POST /customers/:id/transactions
@@ -1350,7 +1442,7 @@ async function handleCustomerOps(method, path, body) {
     const amount = Number(payload.amount) || 0;
     const type = payload.type || 'payment';
 
-    let cQuery = supabase.from('customers').select('balance').eq('id', customerId);
+    let cQuery = supabase.from('customers').select('*').eq('id', customerId);
     if (tenant_id) cQuery = cQuery.eq('tenant_id', tenant_id);
     const { data: customer } = await cQuery.maybeSingle();
 
@@ -1362,6 +1454,22 @@ async function handleCustomerOps(method, path, body) {
       let updQuery = supabase.from('customers').update({ balance: newBal }).eq('id', customerId);
       if (tenant_id) updQuery = updQuery.eq('tenant_id', tenant_id);
       await updQuery;
+
+      // When customer pays cash for their udhar, record it into income so it enters daily closing!
+      if (type === 'payment' && amount > 0) {
+        try {
+          const incPayload = {
+            date: getTodayString(),
+            type: 'Customer Payment',
+            amount: amount,
+            description: `Payment from ${customer.name || 'Customer'} [CID:${customerId}]${payload.description ? ` - ${payload.description}` : ''}`,
+            tenant_id: tenant_id || customer.tenant_id
+          };
+          await supabase.from('income').insert([incPayload]);
+        } catch (incErr) {
+          console.warn('Failed to insert customer payment into income table:', incErr);
+        }
+      }
     }
 
     return { success: true, message: 'Transaction recorded' };

@@ -109,6 +109,23 @@ router.post('/', authorize('orders', 'pos'), (req, res) => {
   logAudit(req.user.id, req.user.username, 'ADD', 'Orders',
     `New order ${orderNumber} — ${order_type} — Rs.${total.toFixed(2)}`);
 
+  if (customer_id && payment_type === 'credit') {
+    try {
+      db.prepare(`
+        UPDATE customers 
+        SET balance = balance + ?
+        WHERE id = ? AND restaurant_id = ?
+      `).run(total, customer_id, restaurantId);
+
+      db.prepare(`
+        INSERT INTO customer_transactions (customer_id, type, amount, description)
+        VALUES (?, 'credit', ?, ?)
+      `).run(customer_id, total, `Order ${orderNumber}`);
+    } catch (cErr) {
+      console.warn('Customer balance update warning:', cErr.message);
+    }
+  }
+
   res.status(201).json({
     id: orderId,
     order_number: orderNumber,

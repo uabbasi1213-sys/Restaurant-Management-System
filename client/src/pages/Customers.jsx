@@ -78,9 +78,11 @@ export default function Customers() {
 
   const viewCustomer = async (customer) => {
     try {
+      const allCust = await api.get('/customers');
+      const freshCust = (Array.isArray(allCust) ? allCust : []).find(c => String(c.id) === String(customer.id)) || customer;
       const txns = await api.get('/customers/' + customer.id + '/transactions');
       const orders = await api.get('/customers/' + customer.id + '/orders');
-      setSelectedCustomer({ ...customer, transactions: txns || [], orders: orders || [] });
+      setSelectedCustomer({ ...freshCust, transactions: txns || [], orders: orders || [] });
     } catch (err) { toast.error(err.message); }
   };
 

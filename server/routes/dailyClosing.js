@@ -25,9 +25,9 @@ router.get('/today', authorize('daily_closing', 'dashboard'), (req, res) => {
   const incomeResult = db.prepare('SELECT COALESCE(SUM(amount), 0) as total FROM income WHERE restaurant_id = ? AND date = ?')
     .get(restaurantId, today);
 
-  // Today's completed order sales (if not already in income)
+  // Today's completed order sales (excluding credit/udhar)
   const orderSales = db.prepare(
-    "SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE restaurant_id = ? AND DATE(created_at) = ? AND status = 'completed'"
+    "SELECT COALESCE(SUM(total), 0) as total FROM orders WHERE restaurant_id = ? AND DATE(created_at) = ? AND status = 'completed' AND payment_type != 'credit'"
   ).get(restaurantId, today);
 
   // Today's expenses

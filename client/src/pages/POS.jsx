@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import {
   Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer, Eye,
-  UtensilsCrossed, Settings, RefreshCw, CheckCircle2, Maximize2, Minimize2, ChevronDown, ChevronUp
+  UtensilsCrossed, Settings, RefreshCw, CheckCircle2, Maximize2, Minimize2, ChevronDown, ChevronUp, UserCheck
 } from 'lucide-react';
 import InvoiceModal from '../components/InvoiceModal';
 import { printInvoice } from '../utils/printInvoice';
@@ -28,6 +28,10 @@ export default function POS() {
   const [expandCategories, setExpandCategories] = useState(false);
   const [isFullView, setIsFullView] = useState(false);
 
+  // Customers for Credit (Udhar) sale
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
+
   // Table Management & Running Order State
   const [activeOrders, setActiveOrders] = useState([]);
   const [activeTableOrder, setActiveTableOrder] = useState(null);
@@ -46,8 +50,18 @@ export default function POS() {
     if (profile) {
       loadMenu();
       loadActiveOrders();
+      loadCustomers();
     }
   }, [profile?.id]);
+
+  const loadCustomers = async () => {
+    try {
+      const data = await api.get('/customers');
+      setCustomers(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.warn('Failed to load customers in POS:', err);
+    }
+  };
 
   const loadMenu = async () => {
     try {
@@ -201,10 +215,14 @@ export default function POS() {
 
   const settleTableBill = async () => {
     if (!activeTableOrder) return;
+    if (paymentType === 'credit' && !selectedCustomerId) {
+      return toast.error('Please select a customer for Credit (Udhar) sale!');
+    }
     try {
       const completed = await api.put(`/orders/${activeTableOrder.id}`, {
         order_type: 'dine-in',
         table_number: tableNumber,
+        customer_id: paymentType === 'credit' ? selectedCustomerId : null,
         total: grandTotal,
         subtotal: subtotal,
         discount: discountAmount,
@@ -227,9 +245,11 @@ export default function POS() {
       setDiscount('');
       setTax('');
       setTableNumber('');
+      setSelectedCustomerId('');
       setSpecialInstructions('');
       setActiveTableOrder(null);
       await loadActiveOrders();
+      loadCustomers();
     } catch (err) {
       toast.error('Failed to settle bill: ' + err.message);
     }
@@ -270,10 +290,14 @@ export default function POS() {
 
   const placeOrder = async () => {
     if (cart.length === 0) return toast.error('Cart is empty!');
+    if (paymentType === 'credit' && !selectedCustomerId) {
+      return toast.error('Please select a customer for Credit (Udhar) sale!');
+    }
     try {
       const orderData = await api.post('/orders', {
         order_type: orderType,
         table_number: tableNumber || null,
+        customer_id: paymentType === 'credit' ? selectedCustomerId : null,
         total: grandTotal,
         subtotal: subtotal,
         discount: discountAmount,
@@ -296,10 +320,12 @@ export default function POS() {
       setDiscount('');
       setTax('');
       setTableNumber('');
+      setSelectedCustomerId('');
       setSpecialInstructions('');
       setActiveTableOrder(null);
       toast.success(`Order ${orderData.order_number} placed!`);
       loadActiveOrders();
+      loadCustomers();
 
       if (autoPrint) {
         setTimeout(() => printInvoice(orderData, tenant), 150);
@@ -500,6 +526,47 @@ export default function POS() {
               >{type}</button>
             ))}
           </div>
+
+          {/* Credit Customer Selector (Udhar Sale) */}
+          {paymentType === 'credit' && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-xs space-y-1.5">
+              <div className="flex items-center justify-between font-bold text-amber-900">
+                <span className="flex items-center gap-1.5">
+                  <UserCheck size={14} className="text-amber-700" /> Select Customer (Khata) *
+                </span>
+                <span className="text-[10px] text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded font-semibold">
+                  Udhar Sale
+                </span>
+              </div>
+              <select
+                value={selectedCustomerId}
+                onChange={e => setSelectedCustomerId(e.target.value)}
+                className="w-full px-2.5 py-2 rounded-lg border border-amber-300 text-xs font-semibold focus:ring-2 focus:ring-amber-500 outline-none bg-white text-gray-800"
+              >
+                <option value="">-- Choose Customer --</option>
+                {customers.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {c.phone ? `(${c.phone})` : ''} — Bal: Rs. {Number(c.balance || 0).toFixed(0)}
+                  </option>
+                ))}
+              </select>
+              {selectedCustomerId ? (() => {
+                const selectedCust = customers.find(c => String(c.id) === String(selectedCustomerId));
+                const currentBal = Number(selectedCust?.balance || 0);
+                const newBal = currentBal + grandTotal;
+                return (
+                  <div className="bg-white/90 rounded-lg p-1.5 text-[11px] text-gray-700 flex justify-between items-center border border-amber-200">
+                    <span>Current Udhar: <strong>Rs. {currentBal.toFixed(0)}</strong></span>
+                    <span className="text-red-600 font-bold">New Bal: Rs. {newBal.toFixed(0)}</span>
+                  </div>
+                );
+              })() : (
+                <p className="text-[10px] text-amber-700 italic">
+                  Order amount will be added to selected customer's Khata.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Auto Print Toggle */}
           <div className="flex items-center justify-between text-xs text-gray-600 px-1 pt-1">
