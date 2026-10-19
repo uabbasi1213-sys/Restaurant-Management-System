@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 import {
   Plus, Minus, Trash2, ShoppingCart, ImageIcon, Send, X, Receipt, Printer, Eye,
-  UtensilsCrossed, Settings, RefreshCw, CheckCircle2
+  UtensilsCrossed, Settings, RefreshCw, CheckCircle2, Maximize2, Minimize2, ChevronDown, ChevronUp
 } from 'lucide-react';
 import InvoiceModal from '../components/InvoiceModal';
 import { printInvoice } from '../utils/printInvoice';
@@ -25,6 +25,8 @@ export default function POS() {
   const [search, setSearch] = useState('');
   const [printOrderId, setPrintOrderId] = useState(null);
   const [autoPrint, setAutoPrint] = useState(() => localStorage.getItem('pos_auto_print') === 'true');
+  const [expandCategories, setExpandCategories] = useState(false);
+  const [isFullView, setIsFullView] = useState(false);
 
   // Table Management & Running Order State
   const [activeOrders, setActiveOrders] = useState([]);
@@ -552,53 +554,87 @@ export default function POS() {
     <div className="flex h-[calc(100vh-5rem)] -m-4 md:-m-6">
       {/* LEFT: Menu Grid - full width on mobile */}
       <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 p-3 md:p-4">
-        {/* Search & Categories */}
-        <div className="mb-3">
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search menu..."
-            className="w-full px-4 py-2.5 rounded-xl border border-gray-300 focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none mb-3"
-          />
-          <div className="flex gap-2 flex-wrap">
+        {/* Search & Header Controls */}
+        <div className="mb-2">
+          <div className="flex gap-2 items-center mb-1.5">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search menu..."
+              className="flex-1 px-3 py-1.5 rounded-lg border border-gray-300 text-xs md:text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none bg-white shadow-xs"
+            />
+            {/* Toggle Category Wrap Button */}
             <button
-              onClick={() => setSelectedCategory('')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                !selectedCategory ? 'bg-orange-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border'
+              type="button"
+              onClick={() => setExpandCategories(!expandCategories)}
+              className="px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-100 text-gray-700 text-xs font-medium flex items-center gap-1 shadow-xs transition-all"
+              title={expandCategories ? 'Collapse categories' : 'Expand all categories'}
+            >
+              <span>Categories</span>
+              {expandCategories ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+            {/* Full Screen / Focus Items Toggle */}
+            <button
+              type="button"
+              onClick={() => setIsFullView(!isFullView)}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 shadow-xs transition-all ${
+                isFullView
+                  ? 'bg-orange-600 text-white border border-orange-600'
+                  : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
               }`}
-            >All</button>
-            {categories.map(cat => (
-              <button
-                key={cat.id}
-                onClick={() => setSelectedCategory(cat.id === selectedCategory ? '' : cat.id)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
-                  selectedCategory === cat.id ? 'bg-orange-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border'
-                }`}
-              >{cat.name}</button>
-            ))}
+              title={isFullView ? 'Normal View' : 'Bari Screen (Expand Items)'}
+            >
+              {isFullView ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              <span className="hidden sm:inline">{isFullView ? 'Normal' : 'Bari Screen'}</span>
+            </button>
           </div>
+
+          {/* Categories Bar: Sleek 1-line horizontal scroll by default */}
+          {(!isFullView || expandCategories) && (
+            <div className={`flex gap-1.5 items-center pb-1 ${
+              expandCategories
+                ? 'flex-wrap max-h-48 overflow-y-auto'
+                : 'overflow-x-auto scrollbar-thin'
+            }`}>
+              <button
+                onClick={() => setSelectedCategory('')}
+                className={`flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-semibold transition ${
+                  !selectedCategory ? 'bg-orange-600 text-white shadow-xs' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                }`}
+              >All</button>
+              {categories.map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => setSelectedCategory(cat.id === selectedCategory ? '' : cat.id)}
+                  className={`flex-shrink-0 px-2.5 py-1 rounded-md text-xs font-medium transition ${
+                    selectedCategory === cat.id ? 'bg-orange-600 text-white shadow-xs' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                  }`}
+                >{cat.name}</button>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Quick Tables Bar (Dine-In) */}
-        {orderType === 'dine-in' && (
-          <div className="mb-3 bg-white p-2.5 rounded-xl border border-gray-200 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
-                <UtensilsCrossed size={14} className="text-orange-600" /> Tables
-                <span className="text-[11px] font-normal text-gray-500">
+        {/* Quick Tables Bar (Dine-In) - Sleek & compact, hidden in full-view */}
+        {!isFullView && orderType === 'dine-in' && (
+          <div className="mb-2 bg-white p-2 rounded-lg border border-gray-200 shadow-xs">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-bold text-gray-700 flex items-center gap-1">
+                <UtensilsCrossed size={12} className="text-orange-600" /> Tables
+                <span className="text-[10px] font-normal text-gray-500">
                   ({activeOrders.length} occupied / {tablesList.length} total)
                 </span>
               </span>
               <button
                 type="button"
                 onClick={() => { setTableCountInput(tablesList.length); setShowTableModal(true); }}
-                className="text-xs text-orange-600 hover:text-orange-800 font-semibold flex items-center gap-1 hover:underline"
+                className="text-[11px] text-orange-600 hover:text-orange-800 font-semibold flex items-center gap-0.5 hover:underline"
               >
-                <Settings size={12} /> Manage Tables
+                <Settings size={11} /> Manage Tables
               </button>
             </div>
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
+            <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-thin">
               {tablesList.map(t => {
                 const running = activeOrders.find(o => o.table_number === t);
                 const isSelected = tableNumber === t;
@@ -607,16 +643,16 @@ export default function POS() {
                     key={t}
                     type="button"
                     onClick={() => handleSelectTable(t)}
-                    className={`flex-shrink-0 px-3 py-1.5 rounded-lg border text-xs transition-all flex flex-col items-center min-w-[70px] ${
+                    className={`flex-shrink-0 px-2 py-1 rounded-md border text-xs transition-all flex flex-col items-center min-w-[62px] ${
                       isSelected
-                        ? 'bg-orange-600 text-white border-orange-600 shadow-sm'
+                        ? 'bg-orange-600 text-white border-orange-600 shadow-xs'
                         : running
                         ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100'
                         : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
                     }`}
                   >
-                    <span className="font-bold">{t}</span>
-                    <span className={`text-[10px] ${isSelected ? 'text-orange-100' : running ? 'text-amber-700 font-bold' : 'text-gray-400'}`}>
+                    <span className="font-bold text-[11px]">{t}</span>
+                    <span className={`text-[9px] ${isSelected ? 'text-orange-100' : running ? 'text-amber-700 font-bold' : 'text-gray-400'}`}>
                       {running ? `Rs. ${Number(running.total || 0).toFixed(0)}` : 'Free'}
                     </span>
                   </button>
@@ -628,25 +664,25 @@ export default function POS() {
 
         {/* Items Grid */}
         <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 gap-2 md:gap-2.5">
             {filteredItems.map(item => (
               <button
                 key={item.id}
                 onClick={() => addToCart(item)}
-                className="bg-white rounded-xl shadow-sm overflow-hidden hover:shadow-md hover:scale-[1.02] transition text-left active:scale-95"
+                className="bg-white rounded-xl shadow-xs border border-gray-100 overflow-hidden hover:shadow-md hover:scale-[1.01] transition text-left active:scale-95"
               >
-                <div className="aspect-[4/3] bg-gray-100 relative">
+                <div className="aspect-[16/10] bg-gray-100 relative">
                   {item.image ? (
                     <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
-                      <ImageIcon size={24} className="text-gray-300 md:w-8 md:h-8" />
+                      <ImageIcon size={22} className="text-gray-300 md:w-6 md:h-6" />
                     </div>
                   )}
                 </div>
-                <div className="p-2 md:p-2.5">
+                <div className="p-2">
                   <p className="font-medium text-gray-800 text-xs md:text-sm truncate">{item.name}</p>
-                  <p className="text-orange-600 font-bold text-sm md:text-base">Rs. {item.sale_price}</p>
+                  <p className="text-orange-600 font-bold text-xs md:text-sm">Rs. {item.sale_price}</p>
                 </div>
               </button>
             ))}
