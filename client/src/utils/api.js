@@ -112,10 +112,6 @@ async function bodyToPayload(body) {
           try {
             const b64 = await fileToBase64(value);
             payload[key] = b64;
-            if (key === 'image' || key === 'logo') {
-              payload.image = b64;
-              payload.logo = b64;
-            }
           } catch (e) {
             console.warn('Failed to convert image file to base64:', e);
           }
@@ -1212,6 +1208,7 @@ async function handleMenuItemOps(method, path, body) {
 
   if (method === 'POST') {
     const payload = await bodyToPayload(body);
+    delete payload.logo;
     if (tenant_id && !payload.tenant_id) payload.tenant_id = tenant_id;
     if (payload.category_id !== undefined) {
       payload.category_id = isValidUUID(payload.category_id) ? payload.category_id : null;
@@ -1233,6 +1230,7 @@ async function handleMenuItemOps(method, path, body) {
   if (method === 'PUT' || method === 'PATCH') {
     const payload = await bodyToPayload(body);
     delete payload.id;
+    delete payload.logo;
     if (payload.category_id !== undefined) {
       payload.category_id = isValidUUID(payload.category_id) ? payload.category_id : null;
     }
@@ -1560,6 +1558,7 @@ async function requestSupabase(method, path, body) {
         if (payload.ntn !== undefined) updateData.ntn = payload.ntn;
         if (payload.strn !== undefined) updateData.strn = payload.strn;
         if (payload.logo !== undefined) updateData.logo = payload.logo;
+        else if (payload.image !== undefined) updateData.logo = payload.image;
         updateData.updated_at = new Date().toISOString();
 
         const { data, error } = await supabase.from('tenants').update(updateData).eq('id', tenant_id).select().single();
