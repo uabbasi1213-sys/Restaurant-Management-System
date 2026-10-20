@@ -318,7 +318,7 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const updateTenant = (data) => setTenant(data);
+  const updateTenant = (data) => setTenant(prev => ({ ...(prev || {}), ...data }));
 
   // Full Admin Access: Admin has all permissions, no lockout
   const isSuperAdmin = !!profile && (
@@ -338,7 +338,21 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, tenant, loading, login, logout, updateTenant, isSuperAdmin, isAdmin, hasPermission, isElectron }}>
+    <AuthContext.Provider value={{
+      user,
+      profile,
+      tenant,
+      restaurant: tenant,
+      loading,
+      login,
+      logout,
+      updateTenant,
+      updateRestaurant: updateTenant,
+      isSuperAdmin,
+      isAdmin,
+      hasPermission,
+      isElectron
+    }}>
       {children}
     </AuthContext.Provider>
   );

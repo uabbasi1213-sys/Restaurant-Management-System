@@ -110,7 +110,12 @@ async function bodyToPayload(body) {
       if (value instanceof File) {
         if (value.size > 0 && value.type.startsWith('image/')) {
           try {
-            payload.image = await fileToBase64(value);
+            const b64 = await fileToBase64(value);
+            payload[key] = b64;
+            if (key === 'image' || key === 'logo') {
+              payload.image = b64;
+              payload.logo = b64;
+            }
           } catch (e) {
             console.warn('Failed to convert image file to base64:', e);
           }
@@ -1534,6 +1539,33 @@ async function requestSupabase(method, path, body) {
         { id: 'cashier', name: 'Cashier' },
         { id: 'staff', name: 'Staff' }
       ];
+    }
+
+    // Restaurant / Tenant Profile & Settings
+    if (cleanPath === '/restaurant' || cleanPath.startsWith('/restaurant')) {
+      const tenant_id = await getTenantId();
+      if (method === 'GET') {
+        if (!tenant_id) return {};
+        const { data, error } = await supabase.from('tenants').select('*').eq('id', tenant_id).maybeSingle();
+        if (error) throw new Error(error.message);
+        return data || {};
+      }
+      if (method === 'PUT' || method === 'POST') {
+        if (!tenant_id) throw new Error('Restaurant / Tenant ID not found');
+        const payload = await bodyToPayload(body);
+        const updateData = {};
+        if (payload.name !== undefined) updateData.name = payload.name;
+        if (payload.address !== undefined) updateData.address = payload.address;
+        if (payload.phone !== undefined) updateData.phone = payload.phone;
+        if (payload.ntn !== undefined) updateData.ntn = payload.ntn;
+        if (payload.strn !== undefined) updateData.strn = payload.strn;
+        if (payload.logo !== undefined) updateData.logo = payload.logo;
+        updateData.updated_at = new Date().toISOString();
+
+        const { data, error } = await supabase.from('tenants').update(updateData).eq('id', tenant_id).select().single();
+        if (error) throw new Error(error.message);
+        return data;
+      }
     }
 
     // Users

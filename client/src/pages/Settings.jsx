@@ -5,30 +5,34 @@ import toast from 'react-hot-toast';
 import { Upload, Save } from 'lucide-react';
 
 export default function Settings() {
-  const { restaurant, updateRestaurant, profile } = useAuth();
+  const { restaurant, tenant, updateRestaurant, updateTenant, profile } = useAuth();
+  const currentRestaurant = restaurant || tenant;
+  const updateProfile = updateRestaurant || updateTenant;
   const [form, setForm] = useState({ name: '', address: '', phone: '', ntn: '', strn: '' });
   const [logoPreview, setLogoPreview] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (restaurant) {
+    if (currentRestaurant) {
       setForm({
-        name: restaurant.name || '',
-        address: restaurant.address || '',
-        phone: restaurant.phone || '',
-        ntn: restaurant.ntn || '',
-        strn: restaurant.strn || ''
+        name: currentRestaurant.name || '',
+        address: currentRestaurant.address || '',
+        phone: currentRestaurant.phone || '',
+        ntn: currentRestaurant.ntn || '',
+        strn: currentRestaurant.strn || ''
       });
-      setLogoPreview(restaurant.logo || '');
+      setLogoPreview(currentRestaurant.logo || '');
     }
-  }, [restaurant]);
+  }, [currentRestaurant]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSaving(true);
     try {
       const updated = await api.put('/restaurant', form);
-      updateRestaurant(updated);
+      if (typeof updateProfile === 'function') {
+        updateProfile(updated);
+      }
       toast.success('Settings updated! Restaurant name will reflect everywhere.');
     } catch (err) {
       toast.error(err.message);
@@ -46,7 +50,9 @@ export default function Settings() {
       formData.append('logo', file);
       const updated = await api.put('/restaurant', formData);
       setLogoPreview(updated.logo || '');
-      updateRestaurant(updated);
+      if (typeof updateProfile === 'function') {
+        updateProfile(updated);
+      }
       toast.success('Logo uploaded!');
     } catch (err) {
       toast.error(err.message);
