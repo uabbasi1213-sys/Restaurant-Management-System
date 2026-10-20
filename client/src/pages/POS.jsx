@@ -35,13 +35,7 @@ export default function POS() {
   // Table Management & Running Order State
   const [activeOrders, setActiveOrders] = useState([]);
   const [activeTableOrder, setActiveTableOrder] = useState(null);
-  const [tablesList, setTablesList] = useState(() => {
-    try {
-      const saved = localStorage.getItem('restaurant_tables');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return Array.from({ length: 12 }, (_, i) => `Table ${i + 1}`);
-  });
+  const [tablesList, setTablesList] = useState(Array.from({ length: 12 }, (_, i) => `Table ${i + 1}`));
   const [showTableModal, setShowTableModal] = useState(false);
   const [tableCountInput, setTableCountInput] = useState(12);
   const [customTableName, setCustomTableName] = useState('');
@@ -51,8 +45,33 @@ export default function POS() {
       loadMenu();
       loadActiveOrders();
       loadCustomers();
+      loadTables();
     }
   }, [profile?.id]);
+
+  // Load tables list from Supabase (cloud) so all computers share the same table setup
+  const loadTables = async () => {
+    try {
+      const data = await api.get('/restaurant');
+      if (data?.tables) {
+        const parsed = typeof data.tables === 'string' ? JSON.parse(data.tables) : data.tables;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setTablesList(parsed);
+        }
+      }
+    } catch (err) {
+      console.warn('Could not load tables from cloud:', err);
+    }
+  };
+
+  // Save tables list to Supabase (cloud) so all computers get the update instantly
+  const saveTablesCloud = async (tableArray) => {
+    try {
+      await api.put('/restaurant', { tables: tableArray });
+    } catch (err) {
+      console.warn('Could not save tables to cloud:', err);
+    }
+  };
 
   const loadCustomers = async () => {
     try {
@@ -259,9 +278,7 @@ export default function POS() {
     const num = Math.max(1, Math.min(100, parseInt(count) || 10));
     const newTables = Array.from({ length: num }, (_, i) => `Table ${i + 1}`);
     setTablesList(newTables);
-    try {
-      localStorage.setItem('restaurant_tables', JSON.stringify(newTables));
-    } catch {}
+    saveTablesCloud(newTables);
     setShowTableModal(false);
     toast.success(`${num} tables configured!`);
   };
@@ -272,9 +289,7 @@ export default function POS() {
     if (tablesList.includes(trimmed)) return toast.error('Table already exists');
     const updated = [...tablesList, trimmed];
     setTablesList(updated);
-    try {
-      localStorage.setItem('restaurant_tables', JSON.stringify(updated));
-    } catch {}
+    saveTablesCloud(updated);
     setCustomTableName('');
     toast.success(`Added ${trimmed}!`);
   };
@@ -282,9 +297,7 @@ export default function POS() {
   const removeTable = (tbl) => {
     const updated = tablesList.filter(t => t !== tbl);
     setTablesList(updated);
-    try {
-      localStorage.setItem('restaurant_tables', JSON.stringify(updated));
-    } catch {}
+    saveTablesCloud(updated);
     if (tableNumber === tbl) setTableNumber('');
   };
 

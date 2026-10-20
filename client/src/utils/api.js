@@ -67,8 +67,15 @@ async function getTenantId() {
 }
 
 
+// Pakistan Standard Time = UTC+5 (no DST). Fixed offset so every computer/browser
+// returns the SAME date regardless of local system timezone.
+function toPKTDate(utcDate) {
+  const PKT_OFFSET_MS = 5 * 60 * 60 * 1000; // +5 hours in ms
+  return new Date(utcDate.getTime() + PKT_OFFSET_MS);
+}
+
 export function getOrderDateString(item) {
-  if (!item) return new Date().toLocaleDateString('en-CA');
+  if (!item) return getTodayString();
   if (item.order_number) {
     const match = String(item.order_number).match(/ORD-(\d{4})(\d{2})(\d{2})-/i);
     if (match) return `${match[1]}-${match[2]}-${match[3]}`;
@@ -79,14 +86,15 @@ export function getOrderDateString(item) {
   }
   if (item.created_at) {
     const d = new Date(item.created_at);
-    if (!isNaN(d.getTime())) return d.toLocaleDateString('en-CA');
+    if (!isNaN(d.getTime())) return toPKTDate(d).toISOString().slice(0, 10);
     return String(item.created_at).slice(0, 10);
   }
-  return new Date().toLocaleDateString('en-CA');
+  return getTodayString();
 }
 
 export function getTodayString() {
-  return new Date().toLocaleDateString('en-CA');
+  // Always return Pakistan date (UTC+5) regardless of browser/system timezone
+  return toPKTDate(new Date()).toISOString().slice(0, 10);
 }
 
 export function isValidUUID(str) {
@@ -669,121 +677,292 @@ async function handleDailyClosingOps(method, path, body) {
 // Special Handler for Reports in Online SaaS Mode
 async function handleReportOps(method, path) {
   const tenant_id = await getTenantId();
-  const cleanPath = path.split('?')[0].replace(/^\/api/, '');
+  const urlParts = path.split('?');
+  const cleanPath = urlParts[0].replace(/^\/api/, '');
+  const searchParams = urlParts[1] ? new URLSearchParams(urlParts[1]) : null;
+  const dateFrom = searchParams ? (searchParams.get('date_from') || '') : '';
+  const dateTo = searchParams ? (searchParams.get('date_to') || '') : '';
+  const groupBy = searchParams ? (searchParams.get('group_by') || 'day') : 'day';
 
+  const inDateRange = (item) => {
+    const dStr = getOrderDateString(item);
+    if (dateFrom && dStr < dateFrom) return false;
+    if (dateTo && dStr > dateTo) return false;
+    return true;
+  };
+
+  // 1. Sales Report
   if (cleanPath === '/reports/sales') {
     let query = supabase.from('orders').select('*');
     if (tenant_id) query = query.eq('tenant_id', tenant_id);
-    const { data: orders } = await query;
+    const { data: allOrders } = await query;
+    const orders = (allOrders || []).filter(inDateRange);
 
+    let totalOrders = orders.length;
     let totalSales = 0;
-    let totalOrders = 0;
-    let dineInTotal = 0;
-    let takeawayTotal = 0;
-    let deliveryTotal = 0;
+    let completedSales = 0;
+    let cancelled = 0;
+    let completedCount = 0;
 
-    (orders || []).forEach(o => {
-      totalOrders++;
+    const dateMap = {};
+    const typeMap = {};
+    const paymentMap = {};
+
+    orders.forEach(o => {
       const amt = Number(o.total) || 0;
       totalSales += amt;
-      if (o.order_type === 'takeaway') takeawayTotal += amt;
-      else if (o.order_type === 'delivery') deliveryTotal += amt;
-      else dineInTotal += amt;
+      const dStr = getOrderDateString(o);
+      const isCompleted = o.status === 'completed' || o.status === 'ready' || o.status === 'preparing';
+
+      if (o.status === 'completed') {
+        completedSales += amt;
+        completedCount++;
+      } else if (o.status === 'cancelled') {
+        cancelled++;
+      }
+
+      if (isCompleted) {
+        // By Date
+        const period = groupBy === 'month' ? dStr.slice(0, 7) : dStr;
+        if (!dateMap[period]) dateMap[period] = { period, orders: 0, sales: 0 };
+        dateMap[period].orders++;
+        dateMap[period].sales += amt;
+
+        // By Type
+        const oType = o.order_type || 'dine-in';
+        if (!typeMap[oType]) typeMap[oType] = { order_type: oType, orders: 0, sales: 0 };
+        typeMap[oType].orders++;
+        typeMap[oType].sales += amt;
+
+        // By Payment
+        const pType = o.payment_type || 'cash';
+        if (!paymentMap[pType]) paymentMap[pType] = { payment_type: pType, orders: 0, sales: 0 };
+        paymentMap[pType].orders++;
+        paymentMap[pType].sales += amt;
+      }
     });
 
+    const byDate = Object.values(dateMap).sort((a, b) => a.period.localeCompare(b.period));
+    const byType = Object.values(typeMap).sort((a, b) => b.sales - a.sales);
+    const byPayment = Object.values(paymentMap).sort((a, b) => b.sales - a.sales);
+
+    // Top Items
+    const completedOrders = orders.filter(o => o.status === 'completed' || o.status === 'ready' || o.status === 'preparing');
+    let topItems = [];
+    if (completedOrders.length > 0) {
+      let itemsQ = supabase.from('order_items').select('*');
+      if (tenant_id) itemsQ = itemsQ.eq('tenant_id', tenant_id);
+      const { data: allItems } = await itemsQ;
+      const orderIdSet = new Set(completedOrders.map(o => o.id));
+      const itemMap = {};
+      (allItems || []).forEach(it => {
+        if (orderIdSet.has(it.order_id)) {
+          const name = it.item_name || 'Item';
+          if (!itemMap[name]) itemMap[name] = { item_name: name, qty: 0, revenue: 0 };
+          itemMap[name].qty += Number(it.quantity) || 0;
+          itemMap[name].revenue += Number(it.total) || 0;
+        }
+      });
+      topItems = Object.values(itemMap).sort((a, b) => b.revenue - a.revenue).slice(0, 10);
+    }
+
+    const avgOrder = completedCount > 0 ? (completedSales / completedCount) : (totalOrders > 0 ? (totalSales / totalOrders) : 0);
+
     return {
-      totalSales,
-      totalOrders,
-      avgOrderValue: totalOrders > 0 ? (totalSales / totalOrders) : 0,
-      dineInTotal,
-      takeawayTotal,
-      deliveryTotal,
-      dailyBreakdown: []
+      summary: {
+        total_orders: totalOrders,
+        total_sales: totalSales,
+        completed_sales: completedSales,
+        cancelled,
+        avg_order: avgOrder
+      },
+      byDate,
+      byType,
+      byPayment,
+      topItems
     };
   }
 
+  // 2. Profit & Loss Report
   if (cleanPath === '/reports/profit-loss') {
+    let ordQuery = supabase.from('orders').select('*');
+    if (tenant_id) ordQuery = ordQuery.eq('tenant_id', tenant_id);
+    const { data: allOrders } = await ordQuery;
+    const orders = (allOrders || []).filter(inDateRange);
+
     let incQuery = supabase.from('income').select('*');
     if (tenant_id) incQuery = incQuery.eq('tenant_id', tenant_id);
-    const { data: incomeData } = await incQuery;
+    const { data: allIncome } = await incQuery;
+    const incomeData = (allIncome || []).filter(inDateRange);
 
     let expQuery = supabase.from('expenses').select('*');
     if (tenant_id) expQuery = expQuery.eq('tenant_id', tenant_id);
-    const { data: expenseData } = await expQuery;
-
-    let ordQuery = supabase.from('orders').select('total');
-    if (tenant_id) ordQuery = ordQuery.eq('tenant_id', tenant_id);
-    const { data: ordersData } = await ordQuery;
+    const { data: allExpenses } = await expQuery;
+    const expenseData = (allExpenses || []).filter(inDateRange);
 
     let salesIncome = 0;
-    (ordersData || []).forEach(o => { salesIncome += Number(o.total) || 0; });
+    orders.forEach(o => {
+      if (o.status === 'completed' || o.status === 'ready' || o.status === 'preparing') {
+        salesIncome += Number(o.total) || 0;
+      }
+    });
 
     let otherIncome = 0;
-    (incomeData || []).forEach(i => { otherIncome += Number(i.amount) || 0; });
+    const incomeTypeMap = {};
+    incomeData.forEach(i => {
+      const amt = Number(i.amount) || 0;
+      otherIncome += amt;
+      const type = i.type || 'Other';
+      incomeTypeMap[type] = (incomeTypeMap[type] || 0) + amt;
+    });
+    const incomeByType = Object.entries(incomeTypeMap).map(([type, total]) => ({ type, total }));
 
-    let totalExpenses = 0;
-    (expenseData || []).forEach(e => { totalExpenses += Number(e.amount) || 0; });
+    let totalExpense = 0;
+    const expCatMap = {};
+    expenseData.forEach(e => {
+      const amt = Number(e.amount) || 0;
+      totalExpense += amt;
+      const cat = e.category || 'Other';
+      expCatMap[cat] = (expCatMap[cat] || 0) + amt;
+    });
+    const expenseByCategory = Object.entries(expCatMap).map(([category, total]) => ({ category, total }));
 
     const totalIncome = salesIncome + otherIncome;
-    const netProfit = totalIncome - totalExpenses;
+    const netProfit = totalIncome - totalExpense;
+    const profitMargin = totalIncome > 0 ? Number(((netProfit / totalIncome) * 100).toFixed(1)) : 0;
 
     return {
       totalIncome,
-      totalExpenses,
-      netProfit,
       salesIncome,
       otherIncome,
-      expenseBreakdown: []
+      incomeByType,
+      totalExpense,
+      expenseByCategory,
+      netProfit,
+      profitMargin
     };
   }
 
+  // 3. Expenses Report
   if (cleanPath === '/reports/expenses') {
     let expQuery = supabase.from('expenses').select('*');
     if (tenant_id) expQuery = expQuery.eq('tenant_id', tenant_id);
-    const { data: expensesList } = await expQuery;
+    const { data: allExpenses } = await expQuery;
+    const expensesList = (allExpenses || []).filter(inDateRange);
 
-    let totalExpenses = 0;
-    (expensesList || []).forEach(e => { totalExpenses += Number(e.amount) || 0; });
+    let total = 0;
+    const catMap = {};
+    const dateMap = {};
+
+    expensesList.forEach(e => {
+      const amt = Number(e.amount) || 0;
+      total += amt;
+      const cat = e.category || 'Other';
+      if (!catMap[cat]) catMap[cat] = { category: cat, total: 0, count: 0 };
+      catMap[cat].total += amt;
+      catMap[cat].count++;
+
+      const dStr = getOrderDateString(e);
+      if (!dateMap[dStr]) dateMap[dStr] = { date: dStr, total: 0 };
+      dateMap[dStr].total += amt;
+    });
+
+    const byCategory = Object.values(catMap).sort((a, b) => b.total - a.total);
+    const byDate = Object.values(dateMap).sort((a, b) => a.date.localeCompare(b.date));
 
     return {
-      totalExpenses,
-      count: (expensesList || []).length,
-      categoryBreakdown: [],
-      expensesList: expensesList || []
+      summary: { total, count: expensesList.length },
+      byCategory,
+      byDate
     };
   }
 
+  // 4. Inventory Report
   if (cleanPath === '/reports/inventory') {
-    let invQuery = supabase.from('inventory').select('*');
+    let invQuery = supabase.from('inventory').select('*').order('name', { ascending: true });
     if (tenant_id) invQuery = invQuery.eq('tenant_id', tenant_id);
-    const { data: items } = await invQuery;
+    const { data: rawItems } = await invQuery;
 
     let totalValue = 0;
-    let lowStockCount = 0;
-    (items || []).forEach(item => {
-      const qty = Number(item.quantity) || 0;
-      const cost = Number(item.cost_per_unit) || 0;
-      const minQty = Number(item.min_quantity) || 0;
-      totalValue += qty * cost;
-      if (qty <= minQty) lowStockCount++;
+    let lowStock = 0;
+    const items = (rawItems || []).map(item => {
+      const current_stock = Number(item.quantity ?? item.current_stock ?? 0);
+      const min_stock = Number(item.low_stock_threshold ?? item.min_stock ?? 0);
+      const cost_price = Number(item.cost ?? item.cost_price ?? 0);
+      const is_low = current_stock <= min_stock;
+      const stock_value = current_stock * cost_price;
+
+      totalValue += stock_value;
+      if (is_low) lowStock++;
+
+      return {
+        id: item.id,
+        name: item.name || 'Item',
+        current_stock,
+        min_stock,
+        unit: item.unit || 'pcs',
+        cost_price,
+        stock_value,
+        is_low
+      };
     });
 
     return {
-      totalItems: (items || []).length,
-      lowStockCount,
-      totalValue,
-      items: items || []
+      summary: {
+        totalItems: items.length,
+        lowStock,
+        totalValue
+      },
+      items
     };
   }
 
+  // 5. Customers Report
   if (cleanPath === '/reports/customers') {
     let custQuery = supabase.from('customers').select('*');
     if (tenant_id) custQuery = custQuery.eq('tenant_id', tenant_id);
-    const { data: customers } = await custQuery;
+    const { data: allCustomers } = await custQuery;
+
+    let ordQuery = supabase.from('orders').select('id, customer_id, total, status, payment_type');
+    if (tenant_id) ordQuery = ordQuery.eq('tenant_id', tenant_id);
+    const { data: allOrders } = await ordQuery;
+
+    let payQuery = supabase.from('customer_payments').select('id, customer_id, amount');
+    if (tenant_id) payQuery = payQuery.eq('tenant_id', tenant_id);
+    const { data: allPayments } = await payQuery;
+
+    let totalReceivable = 0;
+    let totalAdvance = 0;
+
+    const topCustomers = (allCustomers || []).map(c => {
+      const custOrders = (allOrders || []).filter(o => o.customer_id === c.id);
+      const creditOrders = custOrders.filter(o => o.payment_type === 'credit');
+      const paidSum = (allPayments || []).filter(p => p.customer_id === c.id).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const creditSum = creditOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
+      
+      const balance = (creditSum > 0 || paidSum > 0) ? (creditSum - paidSum) : (Number(c.balance) || 0);
+      const spent = custOrders.filter(o => o.status === 'completed' || o.status === 'ready' || o.status === 'preparing')
+                              .reduce((s, o) => s + (Number(o.total) || 0), 0);
+
+      if (balance > 0) totalReceivable += balance;
+      else if (balance < 0) totalAdvance += Math.abs(balance);
+
+      return {
+        name: c.name || 'Customer',
+        phone: c.phone || '',
+        balance,
+        orders: custOrders.length,
+        spent
+      };
+    }).sort((a, b) => b.spent - a.spent).slice(0, 10);
 
     return {
-      totalCustomers: (customers || []).length,
-      topCustomers: customers || []
+      summary: {
+        total: (allCustomers || []).length,
+        total_receivable: totalReceivable,
+        total_advance: totalAdvance
+      },
+      topCustomers
     };
   }
 
@@ -1559,9 +1738,20 @@ async function requestSupabase(method, path, body) {
         if (payload.strn !== undefined) updateData.strn = payload.strn;
         if (payload.logo !== undefined) updateData.logo = payload.logo;
         else if (payload.image !== undefined) updateData.logo = payload.image;
+        // Save tables list (cloud sync across computers)
+        if (payload.tables !== undefined) {
+          updateData.tables = Array.isArray(payload.tables) ? JSON.stringify(payload.tables) : payload.tables;
+        }
         updateData.updated_at = new Date().toISOString();
 
-        const { data, error } = await supabase.from('tenants').update(updateData).eq('id', tenant_id).select().single();
+        let { data, error } = await supabase.from('tenants').update(updateData).eq('id', tenant_id).select().single();
+        // If tables column doesn't exist yet, retry without it (graceful fallback)
+        if (error && error.message && error.message.includes('tables')) {
+          delete updateData.tables;
+          const retry = await supabase.from('tenants').update(updateData).eq('id', tenant_id).select().single();
+          data = retry.data;
+          error = retry.error;
+        }
         if (error) throw new Error(error.message);
         return data;
       }

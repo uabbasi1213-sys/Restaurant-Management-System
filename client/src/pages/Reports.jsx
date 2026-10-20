@@ -113,7 +113,7 @@ export default function Reports() {
 }
 
 function SalesReport({ data }) {
-  const { summary, byDate, byType, byPayment, topItems } = data;
+  const { summary = {}, byDate = [], byType = [], byPayment = [], topItems = [] } = data || {};
   return (
     <div className="space-y-6">
       {/* Summary */}
@@ -276,7 +276,7 @@ function ProfitLossReport({ data }) {
 }
 
 function ExpenseReport({ data }) {
-  const { summary, byCategory, byDate } = data;
+  const { summary = {}, byCategory = [], byDate = [] } = data || {};
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4">
@@ -337,7 +337,7 @@ function ExpenseReport({ data }) {
 }
 
 function InventoryReport({ data }) {
-  const { summary, items } = data;
+  const { summary = {}, items = [] } = data || {};
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-4">
@@ -392,7 +392,7 @@ function InventoryReport({ data }) {
 }
 
 function CustomerReport({ data }) {
-  const { summary, topCustomers } = data;
+  const { summary = {}, topCustomers = [] } = data || {};
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-4">
